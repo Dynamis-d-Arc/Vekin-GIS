@@ -1,0 +1,14 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+psycopg[binary,pool]==3.2.3
+python-dotenv==1.0.1
+pydantic-settings==2.7.1
+pystac-client==0.8.6
+planetary-computer==1.0.0
+rasterio==1.4.3
+numpy==2.2.1
+shapely==2.0.6
+pyproj==3.7.0
+rasterstats==0.20.0
+geojson-pydantic==1.1.2
+
