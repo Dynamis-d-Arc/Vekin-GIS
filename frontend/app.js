@@ -109,8 +109,14 @@ const satellite = L.tileLayer(
 
 const overlays = {};
 const layerControl = L.control.layers({ Streets: streets, Satellite: satellite }, overlays).addTo(map);
-const contextOverlayNames = new Set();
-let contextLayerCounter = 0;
+const contextLayerGroups = {
+  "DEM / Elevation": L.layerGroup(),
+  "Land Cover": L.layerGroup().addTo(map),
+};
+overlays["DEM / Elevation"] = contextLayerGroups["DEM / Elevation"];
+overlays["Land Cover"] = contextLayerGroups["Land Cover"];
+layerControl.addOverlay(contextLayerGroups["DEM / Elevation"], "DEM / Elevation");
+layerControl.addOverlay(contextLayerGroups["Land Cover"], "Land Cover");
 
 let selectedArea = L.rectangle(bangkokBounds, {
   color: "#1b7f5a",
@@ -306,46 +312,34 @@ async function loadContextLayers(area) {
 }
 
 function removeContextLayers() {
-  contextOverlayNames.forEach((name) => {
-    if (overlays[name]) {
-      map.removeLayer(overlays[name]);
-      layerControl.removeLayer(overlays[name]);
-      delete overlays[name];
-    }
-  });
-  contextOverlayNames.clear();
+  contextLayerGroups["DEM / Elevation"].clearLayers();
+  contextLayerGroups["Land Cover"].clearLayers();
 }
 
 function addContextLayers(context, options = {}) {
+  const demWasVisible = map.hasLayer(contextLayerGroups["DEM / Elevation"]);
   if (options.replaceExisting) {
     removeContextLayers();
   }
 
-  const hasVisibleDem = Array.from(contextOverlayNames)
-    .filter((name) => name.startsWith("DEM / Elevation"))
-    .some((name) => overlays[name] && map.hasLayer(overlays[name]));
-  const labelSuffix = options.replaceExisting ? "" : ` ${++contextLayerCounter}`;
-  const demName = `DEM / Elevation${labelSuffix}`;
-  const landCoverName = `Land Cover${labelSuffix}`;
-
-  overlays[demName] = L.imageOverlay(context.dem_url, context.bounds, {
+  const demLayer = L.imageOverlay(context.dem_url, context.bounds, {
     opacity: 0.5,
     pane: "contextPane",
   });
-  overlays[landCoverName] = L.imageOverlay(context.land_cover_url, context.bounds, {
+  const landCoverLayer = L.imageOverlay(context.land_cover_url, context.bounds, {
     opacity: 0.45,
     pane: "contextPane",
   });
 
-  overlays[landCoverName].addTo(map);
-  if (hasVisibleDem) {
-    overlays[demName].addTo(map);
-  }
+  contextLayerGroups["DEM / Elevation"].addLayer(demLayer);
+  contextLayerGroups["Land Cover"].addLayer(landCoverLayer);
 
-  contextOverlayNames.add(demName);
-  contextOverlayNames.add(landCoverName);
-  layerControl.addOverlay(overlays[demName], demName);
-  layerControl.addOverlay(overlays[landCoverName], landCoverName);
+  if (demWasVisible) {
+    contextLayerGroups["DEM / Elevation"].addTo(map);
+  }
+  if (options.showLandCover !== false) {
+    contextLayerGroups["Land Cover"].addTo(map);
+  }
 }
 
 async function loadLatestSavedContextLayer() {
