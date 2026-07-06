@@ -109,6 +109,8 @@ const satellite = L.tileLayer(
 
 const overlays = {};
 const layerControl = L.control.layers({ Streets: streets, Satellite: satellite }, overlays).addTo(map);
+const contextOverlayNames = new Set();
+let contextLayerCounter = 0;
 
 let selectedArea = L.rectangle(bangkokBounds, {
   color: "#1b7f5a",
@@ -264,6 +266,17 @@ function boundsToPolygon(bounds) {
   };
 }
 
+function polygonToBounds(geometry) {
+  const coordinates = geometry?.coordinates?.flat(2) ?? [];
+  const lngs = coordinates.filter((_, index) => index % 2 === 0);
+  const lats = coordinates.filter((_, index) => index % 2 === 1);
+  if (!lngs.length || !lats.length) return null;
+  return [
+    [Math.min(...lats), Math.min(...lngs)],
+    [Math.max(...lats), Math.max(...lngs)],
+  ];
+}
+
 function ndviColor(value) {
   if (value === null || value === undefined) return "#cbd5cf";
   if (value < 0.15) return "#b8542f";
@@ -288,26 +301,66 @@ async function loadContextLayers(area) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ area }),
   });
+  addContextLayers(context);
+  return context;
+}
 
-  ["DEM / Elevation", "Land Cover"].forEach((name) => {
+function removeContextLayers() {
+  contextOverlayNames.forEach((name) => {
     if (overlays[name]) {
       map.removeLayer(overlays[name]);
       layerControl.removeLayer(overlays[name]);
       delete overlays[name];
     }
   });
+  contextOverlayNames.clear();
+}
 
-  overlays["DEM / Elevation"] = L.imageOverlay(context.dem_url, context.bounds, {
+function addContextLayers(context, options = {}) {
+  if (options.replaceExisting) {
+    removeContextLayers();
+  }
+
+  const hasVisibleDem = Array.from(contextOverlayNames)
+    .filter((name) => name.startsWith("DEM / Elevation"))
+    .some((name) => overlays[name] && map.hasLayer(overlays[name]));
+  const labelSuffix = options.replaceExisting ? "" : ` ${++contextLayerCounter}`;
+  const demName = `DEM / Elevation${labelSuffix}`;
+  const landCoverName = `Land Cover${labelSuffix}`;
+
+  overlays[demName] = L.imageOverlay(context.dem_url, context.bounds, {
     opacity: 0.5,
     pane: "contextPane",
   });
-  overlays["Land Cover"] = L.imageOverlay(context.land_cover_url, context.bounds, {
+  overlays[landCoverName] = L.imageOverlay(context.land_cover_url, context.bounds, {
     opacity: 0.45,
     pane: "contextPane",
-  }).addTo(map);
+  });
 
-  layerControl.addOverlay(overlays["DEM / Elevation"], "DEM / Elevation");
-  layerControl.addOverlay(overlays["Land Cover"], "Land Cover");
+  overlays[landCoverName].addTo(map);
+  if (hasVisibleDem) {
+    overlays[demName].addTo(map);
+  }
+
+  contextOverlayNames.add(demName);
+  contextOverlayNames.add(landCoverName);
+  layerControl.addOverlay(overlays[demName], demName);
+  layerControl.addOverlay(overlays[landCoverName], landCoverName);
+}
+
+async function loadLatestSavedContextLayer() {
+  const rows = await fetchJson("/api/context/layers?limit=1");
+  if (!rows.length) return;
+  const latest = rows[0];
+  const bounds = polygonToBounds(latest.bbox);
+  if (!bounds) return;
+  addContextLayers({
+    bounds,
+    dem_url: latest.dem_url,
+    land_cover_url: latest.land_cover_url,
+  }, {
+    replaceExisting: true,
+  });
 }
 
 function getSelectedDate() {
@@ -318,7 +371,7 @@ function toGridCaptureParam(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value;
 }
 
-async function loadGridLayer(captureDate = getSelectedDate()) {
+async function loadGridLayer(captureDate = null) {
   const path = captureDate ? `/api/grids?capture_date=${encodeURIComponent(toGridCaptureParam(captureDate))}` : "/api/grids";
   const grid = await fetchJson(path);
   if (overlays.Grids) {
@@ -430,7 +483,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
     const contextSucceeded = await loadContextLayers(payload.area)
       .then(() => true)
       .catch(() => false);
-    await Promise.all([loadGridLayer(result.capture_date), loadDashboard(), loadMetadata()]);
+    await Promise.all([loadGridLayer(), loadDashboard(), loadMetadata()]);
     const contextFailed = !contextSucceeded;
     const suffix = contextFailed ? " DEM/land-cover context was not available for this area." : "";
     setStatus(`Complete. Processed ${result.grids_processed} grid cells for ${new Date(result.capture_date).toLocaleDateString()}.${suffix}`);
@@ -472,11 +525,11 @@ defaultDate.setDate(defaultDate.getDate() - 30);
 document.getElementById("date").valueAsDate = defaultDate;
 updateBboxReadout();
 document.getElementById("date").addEventListener("change", () => {
-  loadGridLayer().catch((error) => {
+  loadGridLayer(getSelectedDate()).catch((error) => {
     setStatus(`Grid refresh failed: ${error.message}`);
   });
 });
-Promise.all([loadGridLayer(), loadDashboard(), loadMetadata()]).catch((error) => {
+Promise.all([loadLatestSavedContextLayer(), loadGridLayer(), loadDashboard(), loadMetadata()]).catch((error) => {
   document.getElementById("status").textContent = `Backend unavailable: ${error.message}`;
 });
 }

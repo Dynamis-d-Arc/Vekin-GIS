@@ -57,6 +57,84 @@ def update_satellite_status(image_id: str, status: str) -> None:
         conn.commit()
 
 
+def upsert_context_layer(
+    *,
+    area_hash: str,
+    selected_area_geojson: dict[str, Any],
+    bbox_geojson: dict[str, Any],
+    dem_url: str,
+    land_cover_url: str,
+    dem_source: str = "cop-dem-glo-30",
+    land_cover_source: str = "esa-worldcover",
+) -> str:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO context_layers (
+              area_hash,
+              selected_area,
+              bbox,
+              dem_url,
+              land_cover_url,
+              dem_source,
+              land_cover_source
+            )
+            VALUES (
+              %(area_hash)s,
+              ST_SetSRID(ST_GeomFromGeoJSON(%(selected_area)s), 4326),
+              ST_SetSRID(ST_GeomFromGeoJSON(%(bbox)s), 4326),
+              %(dem_url)s,
+              %(land_cover_url)s,
+              %(dem_source)s,
+              %(land_cover_source)s
+            )
+            ON CONFLICT (area_hash) DO UPDATE SET
+              selected_area = EXCLUDED.selected_area,
+              bbox = EXCLUDED.bbox,
+              dem_url = EXCLUDED.dem_url,
+              land_cover_url = EXCLUDED.land_cover_url,
+              dem_source = EXCLUDED.dem_source,
+              land_cover_source = EXCLUDED.land_cover_source,
+              updated_at = now()
+            RETURNING id::text
+            """,
+            {
+                "area_hash": area_hash,
+                "selected_area": Json(selected_area_geojson),
+                "bbox": Json(bbox_geojson),
+                "dem_url": dem_url,
+                "land_cover_url": land_cover_url,
+                "dem_source": dem_source,
+                "land_cover_source": land_cover_source,
+            },
+        ).fetchone()
+        conn.commit()
+        return row["id"]
+
+
+def get_context_layers(limit: int = 20) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        return conn.execute(
+            """
+            SELECT
+              id::text,
+              area_hash,
+              ST_AsGeoJSON(selected_area)::json AS selected_area,
+              ST_AsGeoJSON(bbox)::json AS bbox,
+              dem_url,
+              land_cover_url,
+              dem_source,
+              land_cover_source,
+              created_at,
+              updated_at
+            FROM context_layers
+            ORDER BY updated_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+
+
 def ensure_grids_for_area(
     geometry_geojson: dict[str, Any],
     *,

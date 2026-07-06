@@ -10,9 +10,10 @@ import rasterio
 from pystac_client import Client
 from rasterio.enums import ColorInterp, Resampling
 from rasterio.merge import merge
-from shapely.geometry import box, shape
+from shapely.geometry import box, mapping, shape
 
 from app.config import get_settings
+from app.repositories import upsert_context_layer
 
 
 MAX_OVERLAY_PIXELS = 2400
@@ -140,6 +141,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     area = shape(area_geojson)
     west, south, east, north = area.bounds
     bbox_values = (west, south, east, north)
+    bbox_geojson = mapping(box(*bbox_values))
     bbox_area = (east - west) * (north - south)
     if bbox_area > MAX_CONTEXT_AREA_DEGREES:
         raise ValueError("Selected area is too large for on-demand DEM and land-cover overlays.")
@@ -167,8 +169,19 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         )
         _rgba_png(land_cover_path, _land_cover_rgba(land_cover))
 
+    relative_dem_url = f"/context/{dem_path.name}"
+    relative_land_cover_url = f"/context/{land_cover_path.name}"
+    context_layer_id = upsert_context_layer(
+        area_hash=key,
+        selected_area_geojson=area_geojson,
+        bbox_geojson=bbox_geojson,
+        dem_url=relative_dem_url,
+        land_cover_url=relative_land_cover_url,
+    )
+
     return {
+        "context_layer_id": context_layer_id,
         "bounds": [[south, west], [north, east]],
-        "dem_url": f"/context/{dem_path.name}",
-        "land_cover_url": f"/context/{land_cover_path.name}",
+        "dem_url": relative_dem_url,
+        "land_cover_url": relative_land_cover_url,
     }

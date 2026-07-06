@@ -19,23 +19,35 @@ def find_sentinel_item(
     client = Client.open(settings.planetary_computer_stac_url)
     area = shape(area_geojson)
     start_date = capture_date - timedelta(days=settings.sentinel_search_days)
-    end_date = capture_date + timedelta(days=settings.sentinel_search_days)
+    end_date = min(capture_date + timedelta(days=settings.sentinel_search_days), date.today())
     date_range = f"{start_date.isoformat()}/{end_date.isoformat()}"
 
+    base_search_args = {
+        "collections": [settings.sentinel_collection],
+        "intersects": area_geojson,
+        "datetime": date_range,
+        "sortby": [{"field": "eo:cloud_cover", "direction": "asc"}],
+        "max_items": 10,
+    }
+
     search = client.search(
-        collections=[settings.sentinel_collection],
-        intersects=area_geojson,
-        datetime=date_range,
+        **base_search_args,
         query={"eo:cloud_cover": {"lt": max_cloud_cover}},
-        sortby=[{"field": "eo:cloud_cover", "direction": "asc"}],
-        max_items=10,
     )
     items = list(search.items())
     if not items:
+        fallback_search_args = {**base_search_args, "max_items": 1}
+        fallback_items = list(client.search(**fallback_search_args).items())
+        fallback = ""
+        if fallback_items:
+            fallback_item = fallback_items[0]
+            fallback_date = fallback_item.datetime.date().isoformat() if fallback_item.datetime else "unknown date"
+            fallback_cloud = fallback_item.properties.get("eo:cloud_cover")
+            fallback = f" Least-cloudy available scene is {fallback_cloud}% on {fallback_date}."
         raise LookupError(
             "No Sentinel-2 image matched the selected area. "
-            f"Searched {date_range} with cloud cover under {max_cloud_cover}%. "
-            "Try an older date or a higher cloud-cover value."
+            f"Searched {date_range} with cloud cover under {max_cloud_cover}%."
+            f"{fallback} Try an older date or a higher cloud-cover value."
         )
 
     item = planetary_computer.sign(items[0])

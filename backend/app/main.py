@@ -11,6 +11,7 @@ from app.db import close_pool, open_pool
 from app.ndvi import calculate_grid_statistics, generate_ndvi
 from app.planetary import find_sentinel_item
 from app.repositories import (
+    get_context_layers,
     get_dashboard,
     get_grid_layer,
     get_metadata,
@@ -145,6 +146,19 @@ def context_layers(request: ContextLayersRequest) -> dict[str, Any]:
         "dem_url": f"{settings.api_public_base_url}{layers['dem_url']}",
         "land_cover_url": f"{settings.api_public_base_url}{layers['land_cover_url']}",
     }
+
+
+@app.get("/api/context/layers")
+def saved_context_layers(limit: int = Query(default=10, ge=1, le=50)) -> list[dict[str, Any]]:
+    rows = get_context_layers(limit)
+    return [
+        {
+            **row,
+            "dem_url": f"{settings.api_public_base_url}{row['dem_url']}",
+            "land_cover_url": f"{settings.api_public_base_url}{row['land_cover_url']}",
+        }
+        for row in rows
+    ]
 
 
 @app.post("/api/change-detection")
