@@ -8,9 +8,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://vekin:vekin@localhost:5432/vekin_gis"
     planetary_computer_stac_url: str = "https://planetarycomputer.microsoft.com/api/stac/v1"
     sentinel_collection: str = "sentinel-2-l2a"
+    api_public_base_url: str = "http://localhost:8000"
     ndvi_temp_dir: Path = Path("tmp/ndvi")
+    context_temp_dir: Path = Path("tmp/context")
     cors_origins: str = "*"
-    sentinel_search_days: int = 5
+    sentinel_search_days: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

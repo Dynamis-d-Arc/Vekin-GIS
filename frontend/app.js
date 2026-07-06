@@ -87,6 +87,12 @@ function renderStaticPreview() {
 
 function bootLeafletPortal() {
 const map = L.map("map", { zoomControl: true }).fitBounds(bangkokBounds);
+map.createPane("contextPane");
+map.getPane("contextPane").style.zIndex = 350;
+map.createPane("ndviPane");
+map.getPane("ndviPane").style.zIndex = 450;
+map.createPane("selectionPane");
+map.getPane("selectionPane").style.zIndex = 500;
 
 const streets = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 20,
@@ -108,6 +114,7 @@ let selectedArea = L.rectangle(bangkokBounds, {
   color: "#1b7f5a",
   weight: 2,
   fillOpacity: 0.05,
+  pane: "selectionPane",
 }).addTo(map);
 let drawMode = false;
 let firstCorner = null;
@@ -275,6 +282,34 @@ async function fetchJson(path, options) {
   return response.json();
 }
 
+async function loadContextLayers(area) {
+  const context = await fetchJson("/api/context/layers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ area }),
+  });
+
+  ["DEM / Elevation", "Land Cover"].forEach((name) => {
+    if (overlays[name]) {
+      map.removeLayer(overlays[name]);
+      layerControl.removeLayer(overlays[name]);
+      delete overlays[name];
+    }
+  });
+
+  overlays["DEM / Elevation"] = L.imageOverlay(context.dem_url, context.bounds, {
+    opacity: 0.5,
+    pane: "contextPane",
+  });
+  overlays["Land Cover"] = L.imageOverlay(context.land_cover_url, context.bounds, {
+    opacity: 0.45,
+    pane: "contextPane",
+  }).addTo(map);
+
+  layerControl.addOverlay(overlays["DEM / Elevation"], "DEM / Elevation");
+  layerControl.addOverlay(overlays["Land Cover"], "Land Cover");
+}
+
 function getSelectedDate() {
   return document.getElementById("date").value;
 }
@@ -291,6 +326,7 @@ async function loadGridLayer(captureDate = getSelectedDate()) {
     layerControl.removeLayer(overlays.Grids);
   }
   overlays.Grids = L.geoJSON(grid, {
+    pane: "ndviPane",
     style: (feature) => ({
       color: "#315c4b",
       weight: 1,
@@ -390,8 +426,14 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    setStatus(`Complete. Processed ${result.grids_processed} grid cells for ${new Date(result.capture_date).toLocaleDateString()}.`);
+    setStatus("Loading DEM and land-cover context for the selected area...");
+    const contextSucceeded = await loadContextLayers(payload.area)
+      .then(() => true)
+      .catch(() => false);
     await Promise.all([loadGridLayer(result.capture_date), loadDashboard(), loadMetadata()]);
+    const contextFailed = !contextSucceeded;
+    const suffix = contextFailed ? " DEM/land-cover context was not available for this area." : "";
+    setStatus(`Complete. Processed ${result.grids_processed} grid cells for ${new Date(result.capture_date).toLocaleDateString()}.${suffix}`);
     map.fitBounds(selectedArea.getBounds(), { padding: [24, 24] });
   } catch (error) {
     setStatus(`Processing failed: ${error.message}`);
@@ -425,7 +467,9 @@ document.getElementById("search-button").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("date").valueAsDate = new Date();
+const defaultDate = new Date();
+defaultDate.setDate(defaultDate.getDate() - 30);
+document.getElementById("date").valueAsDate = defaultDate;
 updateBboxReadout();
 document.getElementById("date").addEventListener("change", () => {
   loadGridLayer().catch((error) => {

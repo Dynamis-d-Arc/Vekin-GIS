@@ -16,6 +16,10 @@ class ChangeDetectionRequest(BaseModel):
     end_date: date
 
 
+class ContextLayersRequest(BaseModel):
+    area: dict[str, Any] = Field(..., description="GeoJSON geometry in EPSG:4326")
+
+
 class ImageSearchResult(BaseModel):
     id: str
     capture_date: datetime
@@ -30,4 +34,3 @@ class ProcessResponse(BaseModel):
     status: str
     grids_processed: int
     ndvi_temp_path: str | None
-

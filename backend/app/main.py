@@ -3,8 +3,10 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
+from app.context_layers import create_context_layers
 from app.db import close_pool, open_pool
 from app.ndvi import calculate_grid_statistics, generate_ndvi
 from app.planetary import find_sentinel_item
@@ -16,11 +18,13 @@ from app.repositories import (
     insert_satellite_image,
     update_satellite_status,
 )
-from app.schemas import AreaDateRequest, ChangeDetectionRequest, ProcessResponse
+from app.schemas import AreaDateRequest, ChangeDetectionRequest, ContextLayersRequest, ProcessResponse
 
 
 settings = get_settings()
 app = FastAPI(title="Vekin GIS Sentinel-2 Platform")
+settings.context_temp_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/context", StaticFiles(directory=settings.context_temp_dir), name="context")
 
 app.add_middleware(
     CORSMiddleware,
@@ -127,6 +131,22 @@ def dashboard() -> dict[str, Any]:
     return get_dashboard()
 
 
+@app.post("/api/context/layers")
+def context_layers(request: ContextLayersRequest) -> dict[str, Any]:
+    try:
+        layers = create_context_layers(request.area)
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Context layer generation failed: {exc}") from exc
+
+    return {
+        **layers,
+        "dem_url": f"{settings.api_public_base_url}{layers['dem_url']}",
+        "land_cover_url": f"{settings.api_public_base_url}{layers['land_cover_url']}",
+    }
+
+
 @app.post("/api/change-detection")
 def change_detection(request: ChangeDetectionRequest) -> dict[str, Any]:
     start_layer = get_grid_layer(datetime.combine(request.start_date, datetime.min.time()))
@@ -158,4 +178,3 @@ def change_detection(request: ChangeDetectionRequest) -> dict[str, Any]:
         )
 
     return {"type": "FeatureCollection", "features": features}
-

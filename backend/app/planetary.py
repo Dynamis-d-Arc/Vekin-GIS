@@ -32,7 +32,11 @@ def find_sentinel_item(
     )
     items = list(search.items())
     if not items:
-        raise LookupError("No Sentinel-2 image matched the area, date, and cloud-cover threshold.")
+        raise LookupError(
+            "No Sentinel-2 image matched the selected area. "
+            f"Searched {date_range} with cloud cover under {max_cloud_cover}%. "
+            "Try an older date or a higher cloud-cover value."
+        )
 
     item = planetary_computer.sign(items[0])
     bbox_geojson = mapping(box(*item.bbox).intersection(area.envelope))
