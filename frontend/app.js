@@ -87,48 +87,6 @@ function renderStaticPreview() {
 
 function bootLeafletPortal() {
 const map = L.map("map", { zoomControl: true }).fitBounds(bangkokBounds);
-const sampleBuildings = {
-  type: "FeatureCollection",
-  features: [
-    {
-      type: "Feature",
-      properties: { name: "Sample building A" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[100.525, 13.742], [100.529, 13.742], [100.529, 13.746], [100.525, 13.746], [100.525, 13.742]]],
-      },
-    },
-    {
-      type: "Feature",
-      properties: { name: "Sample building B" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[100.538, 13.756], [100.543, 13.756], [100.543, 13.761], [100.538, 13.761], [100.538, 13.756]]],
-      },
-    },
-  ],
-};
-const sampleParcels = {
-  type: "FeatureCollection",
-  features: [
-    {
-      type: "Feature",
-      properties: { parcel_id: "BKK-P-001" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[100.518, 13.737], [100.532, 13.737], [100.532, 13.75], [100.518, 13.75], [100.518, 13.737]]],
-      },
-    },
-    {
-      type: "Feature",
-      properties: { parcel_id: "BKK-P-002" },
-      geometry: {
-        type: "Polygon",
-        coordinates: [[[100.534, 13.752], [100.55, 13.752], [100.55, 13.766], [100.534, 13.766], [100.534, 13.752]]],
-      },
-    },
-  ],
-};
 
 const streets = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 20,
@@ -145,28 +103,6 @@ const satellite = L.tileLayer(
 
 const overlays = {};
 const layerControl = L.control.layers({ Streets: streets, Satellite: satellite }, overlays).addTo(map);
-const roads = L.layerGroup().addTo(map);
-layerControl.addOverlay(roads, "Roads");
-
-const buildings = L.geoJSON(null, {
-  style: {
-    color: "#6a6f74",
-    weight: 1,
-    fillColor: "#9aa2a8",
-    fillOpacity: 0.35,
-  },
-}).addTo(map);
-layerControl.addOverlay(buildings, "Buildings");
-
-const parcels = L.geoJSON(null, {
-  style: {
-    color: "#8b6f32",
-    weight: 1,
-    fillColor: "#d8c64b",
-    fillOpacity: 0.18,
-  },
-}).addTo(map);
-layerControl.addOverlay(parcels, "Parcels");
 
 let selectedArea = L.rectangle(bangkokBounds, {
   color: "#1b7f5a",
@@ -244,18 +180,6 @@ function startDrawMode() {
   drawButton.classList.add("is-active");
   map.getContainer().style.cursor = "crosshair";
   setStatus("Draw box mode: click the first corner, then click the opposite corner.");
-}
-
-function drawRoads() {
-  const lines = [
-    [[13.738, 100.492], [13.754, 100.534], [13.762, 100.58]],
-    [[13.69, 100.47], [13.72, 100.52], [13.748, 100.56]],
-    [[13.775, 100.51], [13.765, 100.56], [13.742, 100.62]],
-  ];
-  lines.forEach((line) => {
-    L.polyline(line, { color: "#f2f4f1", weight: 5, opacity: 0.95 }).addTo(roads);
-    L.polyline(line, { color: "#d34f34", weight: 2, opacity: 0.85 }).addTo(roads);
-  });
 }
 
 map.on("click", (event) => {
@@ -351,8 +275,17 @@ async function fetchJson(path, options) {
   return response.json();
 }
 
-async function loadGridLayer() {
-  const grid = await fetchJson("/api/grids");
+function getSelectedDate() {
+  return document.getElementById("date").value;
+}
+
+function toGridCaptureParam(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value;
+}
+
+async function loadGridLayer(captureDate = getSelectedDate()) {
+  const path = captureDate ? `/api/grids?capture_date=${encodeURIComponent(toGridCaptureParam(captureDate))}` : "/api/grids";
+  const grid = await fetchJson(path);
   if (overlays.Grids) {
     map.removeLayer(overlays.Grids);
     layerControl.removeLayer(overlays.Grids);
@@ -458,7 +391,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       body: JSON.stringify(payload),
     });
     setStatus(`Complete. Processed ${result.grids_processed} grid cells for ${new Date(result.capture_date).toLocaleDateString()}.`);
-    await Promise.all([loadGridLayer(), loadDashboard(), loadMetadata()]);
+    await Promise.all([loadGridLayer(result.capture_date), loadDashboard(), loadMetadata()]);
     map.fitBounds(selectedArea.getBounds(), { padding: [24, 24] });
   } catch (error) {
     setStatus(`Processing failed: ${error.message}`);
@@ -492,15 +425,13 @@ document.getElementById("search-button").addEventListener("click", async () => {
   }
 });
 
-function loadLocalLayers() {
-  buildings.addData(sampleBuildings);
-  parcels.addData(sampleParcels);
-}
-
 document.getElementById("date").valueAsDate = new Date();
 updateBboxReadout();
-drawRoads();
-loadLocalLayers();
+document.getElementById("date").addEventListener("change", () => {
+  loadGridLayer().catch((error) => {
+    setStatus(`Grid refresh failed: ${error.message}`);
+  });
+});
 Promise.all([loadGridLayer(), loadDashboard(), loadMetadata()]).catch((error) => {
   document.getElementById("status").textContent = `Backend unavailable: ${error.message}`;
 });
