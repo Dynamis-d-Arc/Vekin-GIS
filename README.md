@@ -25,6 +25,12 @@ The platform does not keep a permanent Sentinel-2 archive. It queries cloud-host
    docker compose up -d db
    ```
 
+   Or start PostGIS and the real NDVI API together:
+
+   ```powershell
+   docker compose up -d --build db api
+   ```
+
 3. Install backend dependencies:
 
    ```powershell
@@ -39,7 +45,7 @@ The platform does not keep a permanent Sentinel-2 archive. It queries cloud-host
    python backend\scripts\migrate.py
    ```
 
-5. Start the backend:
+5. Start the backend if you are not using Docker for the API:
 
    ```powershell
    uvicorn app.main:app --app-dir backend --reload
@@ -48,6 +54,8 @@ The platform does not keep a permanent Sentinel-2 archive. It queries cloud-host
 6. Open `frontend/index.html` in a browser.
 
 The frontend expects the backend at `http://localhost:8000`.
+
+Use `scripts/demo-api.mjs` only for frontend demos. Real NDVI values require the Docker/API backend, PostGIS, and network access to Microsoft Planetary Computer.
 
 ## Core API
 

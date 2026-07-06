@@ -1,4 +1,5 @@
 from datetime import date
+from datetime import timedelta
 from typing import Any
 
 import planetary_computer
@@ -17,7 +18,9 @@ def find_sentinel_item(
     settings = get_settings()
     client = Client.open(settings.planetary_computer_stac_url)
     area = shape(area_geojson)
-    date_range = f"{capture_date.isoformat()}/{capture_date.isoformat()}"
+    start_date = capture_date - timedelta(days=settings.sentinel_search_days)
+    end_date = capture_date + timedelta(days=settings.sentinel_search_days)
+    date_range = f"{start_date.isoformat()}/{end_date.isoformat()}"
 
     search = client.search(
         collections=[settings.sentinel_collection],
@@ -49,4 +52,3 @@ def find_sentinel_item(
         "nir_url": nir_asset.href,
         "temporary_image_url": item.get_self_href(),
     }
-

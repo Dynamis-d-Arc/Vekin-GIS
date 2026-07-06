@@ -6,6 +6,10 @@ from psycopg.types.json import Json
 from app.db import get_connection
 
 
+DEFAULT_GRID_SIZE_METERS = 1000
+MAX_PROCESSING_GRIDS = 2500
+
+
 def insert_satellite_image(
     *,
     capture_date: datetime,
@@ -53,6 +57,69 @@ def update_satellite_status(image_id: str, status: str) -> None:
         conn.commit()
 
 
+def ensure_grids_for_area(
+    geometry_geojson: dict[str, Any],
+    *,
+    grid_size_meters: int = DEFAULT_GRID_SIZE_METERS,
+) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            WITH input AS (
+              SELECT ST_SetSRID(ST_GeomFromGeoJSON(%(geometry)s), 4326) AS geom
+            ),
+            metric_input AS (
+              SELECT ST_Transform(geom, 3857) AS geom
+              FROM input
+            ),
+            cells AS (
+              SELECT (ST_SquareGrid(%(grid_size)s, geom)).geom AS geom
+              FROM metric_input
+            ),
+            clipped AS (
+              SELECT
+                ST_Multi(ST_Transform(ST_Intersection(cells.geom, metric_input.geom), 4326)) AS geometry
+              FROM cells
+              CROSS JOIN metric_input
+              WHERE ST_Intersects(cells.geom, metric_input.geom)
+            ),
+            polygons AS (
+              SELECT
+                ST_CollectionExtract(geometry, 3)::geometry(MultiPolygon, 4326) AS geometry
+              FROM clipped
+              WHERE NOT ST_IsEmpty(geometry)
+            ),
+            numbered AS (
+              SELECT
+                'GRID-' || md5(ST_AsEWKB(ST_SnapToGrid(geometry, 0.000001))) AS grid_id,
+                geometry
+              FROM polygons
+              LIMIT %(max_grids)s
+            ),
+            upserted AS (
+              INSERT INTO grids (grid_id, geometry)
+              SELECT grid_id, ST_GeometryN(geometry, 1)::geometry(Polygon, 4326)
+              FROM numbered
+              ON CONFLICT (grid_id) DO UPDATE
+              SET geometry = EXCLUDED.geometry
+              RETURNING grid_id, geometry
+            )
+            SELECT
+              grid_id,
+              ST_AsGeoJSON(geometry)::json AS geometry
+            FROM upserted
+            ORDER BY grid_id
+            """,
+            {
+                "geometry": Json(geometry_geojson),
+                "grid_size": grid_size_meters,
+                "max_grids": MAX_PROCESSING_GRIDS,
+            },
+        ).fetchall()
+        conn.commit()
+        return rows
+
+
 def get_grids_intersecting(geometry_geojson: dict[str, Any]) -> list[dict[str, Any]]:
     with get_connection() as conn:
         return conn.execute(
@@ -77,6 +144,17 @@ def insert_ndvi_statistics(rows: list[dict[str, Any]], satellite_image_id: str) 
 
     with get_connection() as conn:
         with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM ndvi_statistics
+                WHERE capture_date = %(capture_date)s
+                AND grid_id = ANY(%(grid_ids)s)
+                """,
+                {
+                    "capture_date": rows[0]["capture_date"],
+                    "grid_ids": [row["grid_id"] for row in rows],
+                },
+            )
             cur.executemany(
                 """
                 INSERT INTO ndvi_statistics (
@@ -140,12 +218,13 @@ def get_metadata(limit: int = 50) -> list[dict[str, Any]]:
 
 def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
     date_filter = ""
-    params: tuple[Any, ...] = ()
+    params: dict[str, Any] = {}
     if capture_date:
-        date_filter = "AND ns.capture_date::date = %s"
-        params = (capture_date.date(),)
+        date_filter = "AND ns.capture_date::date = %(capture_date)s"
+        params["capture_date"] = capture_date.date()
 
     with get_connection() as conn:
+        stats_exist = conn.execute("SELECT EXISTS (SELECT 1 FROM ndvi_statistics)").fetchone()["exists"]
         rows = conn.execute(
             f"""
             SELECT
@@ -164,9 +243,10 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
               ORDER BY ns.capture_date DESC
               LIMIT 1
             ) ns ON true
+            WHERE %(show_all_grids)s OR ns.capture_date IS NOT NULL
             ORDER BY g.grid_id
             """,
-            params,
+            {"show_all_grids": not stats_exist, **params},
         ).fetchall()
 
     return {
@@ -192,17 +272,35 @@ def get_dashboard() -> dict[str, Any]:
     with get_connection() as conn:
         summary = conn.execute(
             """
+            WITH latest_stats AS (
+              SELECT DISTINCT ON (grid_id, capture_date)
+                grid_id,
+                capture_date,
+                average_ndvi,
+                minimum_ndvi,
+                maximum_ndvi
+              FROM ndvi_statistics
+              ORDER BY grid_id, capture_date, created_at DESC
+            )
             SELECT
               avg(average_ndvi) AS average_ndvi,
               min(minimum_ndvi) AS minimum_ndvi,
               max(maximum_ndvi) AS maximum_ndvi
-            FROM ndvi_statistics
+            FROM latest_stats
             """
         ).fetchone()
         lowest = conn.execute(
             """
+            WITH latest_stats AS (
+              SELECT DISTINCT ON (grid_id, capture_date)
+                grid_id,
+                capture_date,
+                average_ndvi
+              FROM ndvi_statistics
+              ORDER BY grid_id, capture_date, created_at DESC
+            )
             SELECT grid_id, average_ndvi, capture_date
-            FROM ndvi_statistics
+            FROM latest_stats
             WHERE average_ndvi IS NOT NULL
             ORDER BY average_ndvi ASC
             LIMIT 10
@@ -210,8 +308,16 @@ def get_dashboard() -> dict[str, Any]:
         ).fetchall()
         highest = conn.execute(
             """
+            WITH latest_stats AS (
+              SELECT DISTINCT ON (grid_id, capture_date)
+                grid_id,
+                capture_date,
+                average_ndvi
+              FROM ndvi_statistics
+              ORDER BY grid_id, capture_date, created_at DESC
+            )
             SELECT grid_id, average_ndvi, capture_date
-            FROM ndvi_statistics
+            FROM latest_stats
             WHERE average_ndvi IS NOT NULL
             ORDER BY average_ndvi DESC
             LIMIT 10
@@ -219,8 +325,16 @@ def get_dashboard() -> dict[str, Any]:
         ).fetchall()
         trend = conn.execute(
             """
+            WITH latest_stats AS (
+              SELECT DISTINCT ON (grid_id, capture_date)
+                grid_id,
+                capture_date,
+                average_ndvi
+              FROM ndvi_statistics
+              ORDER BY grid_id, capture_date, created_at DESC
+            )
             SELECT capture_date::date AS date, avg(average_ndvi) AS average_ndvi
-            FROM ndvi_statistics
+            FROM latest_stats
             GROUP BY capture_date::date
             ORDER BY date
             """
@@ -232,4 +346,3 @@ def get_dashboard() -> dict[str, Any]:
         "highest": highest,
         "trend": trend,
     }
-

@@ -10,7 +10,7 @@ from rasterstats import zonal_stats
 from shapely.geometry import mapping, shape
 
 from app.config import get_settings
-from app.repositories import get_grids_intersecting
+from app.repositories import ensure_grids_for_area
 
 
 def _read_band_for_area(asset_url: str, area_geojson: dict[str, Any]) -> tuple[np.ndarray, dict[str, Any]]:
@@ -19,6 +19,9 @@ def _read_band_for_area(asset_url: str, area_geojson: dict[str, Any]) -> tuple[n
             area = shape(area_geojson)
             src_area = transform_geom("EPSG:4326", src.crs, mapping(area))
             out_image, out_transform = mask(src, [src_area], crop=True, indexes=1, filled=True)
+            out_image = out_image.astype("float32")
+            if src.nodata is not None:
+                out_image[out_image == src.nodata] = np.nan
             profile = src.profile.copy()
             profile.update(
                 height=out_image.shape[0],
@@ -28,7 +31,7 @@ def _read_band_for_area(asset_url: str, area_geojson: dict[str, Any]) -> tuple[n
                 dtype="float32",
                 nodata=np.nan,
             )
-            return out_image.astype("float32"), profile
+            return out_image, profile
 
 
 def generate_ndvi(
@@ -45,11 +48,12 @@ def generate_ndvi(
     nir, _ = _read_band_for_area(nir_url, area_geojson)
 
     denominator = nir + red
+    valid = np.isfinite(red) & np.isfinite(nir) & (red > 0) & (nir > 0)
     ndvi = np.divide(
         nir - red,
         denominator,
         out=np.full_like(nir, np.nan, dtype="float32"),
-        where=denominator != 0,
+        where=valid & (denominator != 0),
     )
     ndvi = np.clip(ndvi, -1, 1).astype("float32")
 
@@ -66,7 +70,7 @@ def calculate_grid_statistics(
     area_geojson: dict[str, Any],
     capture_date: datetime,
 ) -> list[dict[str, Any]]:
-    grids = get_grids_intersecting(area_geojson)
+    grids = ensure_grids_for_area(area_geojson)
     if not grids:
         return []
 

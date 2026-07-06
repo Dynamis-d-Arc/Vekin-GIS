@@ -17,6 +17,22 @@ services:
       timeout: 5s
       retries: 5
 
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: vekin-gis-api
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://vekin:vekin@db:5432/vekin_gis
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./tmp:/app/tmp
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   postgis-data:
-
