@@ -572,31 +572,46 @@ async function loadUrbanContext() {
 
 document.getElementById("process-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const date = document.getElementById("date").value;
+  const startDate = document.getElementById("date").value;
+  const endDate = document.getElementById("end-date").value;
   const maxCloud = Number(document.getElementById("cloud").value || 40);
-  if (!date) return;
+  if (!startDate || !endDate) return;
+  if (startDate > endDate) {
+    setStatus("Processing failed: start date must be before or equal to end date.");
+    return;
+  }
 
   resetDrawMode();
-  setStatus("Querying Sentinel-2 and processing B04/B08 NDVI...");
+  const isRange = startDate !== endDate;
+  setStatus(isRange ? "Querying Sentinel-2 scenes across the date range..." : "Querying Sentinel-2 and processing B04/B08 NDVI...");
   try {
     const payload = {
       area: boundsToPolygon(selectedArea.getBounds()),
-      date,
       max_cloud_cover: maxCloud,
     };
-    const result = await fetchJson("/api/ndvi/process", {
+    const path = isRange ? "/api/ndvi/process-range" : "/api/ndvi/process";
+    const body = isRange
+      ? { ...payload, start_date: startDate, end_date: endDate }
+      : { ...payload, date: startDate };
+    const result = await fetchJson(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     });
     setStatus("Loading DEM and land-cover context for the selected area...");
     const contextSucceeded = await loadContextLayers(payload.area)
       .then(() => true)
       .catch(() => false);
-    await Promise.all([loadGridLayer(), loadDashboard(), loadMetadata(), loadUrbanContext()]);
+    const displayCaptureDate = isRange
+      ? result.results.at(-1)?.capture_date
+      : result.capture_date;
+    await Promise.all([loadGridLayer(displayCaptureDate), loadDashboard(), loadMetadata(), loadUrbanContext()]);
     const contextFailed = !contextSucceeded;
     const suffix = contextFailed ? " DEM/land-cover context was not available for this area." : "";
-    setStatus(`Complete. Processed ${result.grids_processed} grid cells for ${new Date(result.capture_date).toLocaleDateString()}.${suffix}`);
+    const completion = isRange
+      ? `Complete. Processed ${result.images_processed} scenes and ${result.grids_processed} grid/date rows.`
+      : `Complete. Processed ${result.grids_processed} grid cells for ${new Date(result.capture_date).toLocaleDateString()}.`;
+    setStatus(`${completion}${suffix}`);
     map.fitBounds(selectedArea.getBounds(), { padding: [24, 24] });
   } catch (error) {
     setStatus(`Processing failed: ${error.message}`);
@@ -633,9 +648,15 @@ document.getElementById("search-button").addEventListener("click", async () => {
 const defaultDate = new Date();
 defaultDate.setDate(defaultDate.getDate() - 30);
 document.getElementById("date").valueAsDate = defaultDate;
+document.getElementById("end-date").valueAsDate = defaultDate;
 updateBboxReadout();
 document.getElementById("date").addEventListener("change", () => {
   loadGridLayer(getSelectedDate()).catch((error) => {
+    setStatus(`Grid refresh failed: ${error.message}`);
+  });
+});
+document.getElementById("end-date").addEventListener("change", () => {
+  loadGridLayer(document.getElementById("end-date").value).catch((error) => {
     setStatus(`Grid refresh failed: ${error.message}`);
   });
 });

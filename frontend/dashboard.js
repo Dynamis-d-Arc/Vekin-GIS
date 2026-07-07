@@ -1,6 +1,20 @@
 const API_BASE = "http://localhost:8000";
 
 let gridRows = [];
+const charts = {};
+
+const palette = {
+  green: "#1b7f5a",
+  lightGreen: "#77a95d",
+  yellow: "#d8c64b",
+  amber: "#d99441",
+  red: "#b8542f",
+  blue: "#3b6f8f",
+  slate: "#5f6f69",
+  line: "#d9e1dc",
+  ink: "#1a2521",
+  muted: "#68736d",
+};
 
 function formatNumber(value, digits = 3) {
   return value === null || value === undefined || !Number.isFinite(Number(value))
@@ -42,6 +56,11 @@ function formatLandCoverMix(percentages) {
     .join(", ");
 }
 
+function finiteOrZero(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
 async function fetchJson(path) {
   const response = await fetch(`${API_BASE}${path}`);
   if (!response.ok) {
@@ -55,18 +74,275 @@ function setStatus(message) {
   document.getElementById("dashboard-status").textContent = message;
 }
 
-function renderTrend(rows) {
-  const node = document.getElementById("dashboard-trend");
-  node.innerHTML = "";
-  const values = rows.map((row) => Number(row.average_ndvi)).filter(Number.isFinite);
-  const max = Math.max(...values, 0.1);
-  rows.forEach((row) => {
-    const bar = document.createElement("span");
-    const value = Number(row.average_ndvi);
-    bar.style.height = `${Math.max(8, (value / max) * 120)}px`;
-    bar.title = `${row.date}: ${formatNumber(value)}`;
-    node.appendChild(bar);
+function chartBaseOptions(extra = {}) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      intersect: false,
+      mode: "index",
+    },
+    plugins: {
+      legend: {
+        labels: {
+          color: palette.ink,
+          boxWidth: 12,
+          boxHeight: 12,
+          usePointStyle: true,
+        },
+      },
+      tooltip: {
+        backgroundColor: "#1a2521",
+        titleColor: "#ffffff",
+        bodyColor: "#ffffff",
+        padding: 10,
+      },
+    },
+    scales: {
+      x: {
+        ticks: { color: palette.muted },
+        grid: { color: "rgba(217, 225, 220, 0.7)" },
+      },
+      y: {
+        beginAtZero: true,
+        ticks: { color: palette.muted },
+        grid: { color: "rgba(217, 225, 220, 0.7)" },
+      },
+    },
+    ...extra,
+  };
+}
+
+function renderChart(id, config) {
+  if (charts[id]) {
+    charts[id].destroy();
+  }
+  const node = document.getElementById(id);
+  charts[id] = new Chart(node, config);
+}
+
+function ndviBucket(value) {
+  if (!Number.isFinite(value)) return null;
+  if (value < 0.15) return "<0.15";
+  if (value < 0.3) return "0.15-0.30";
+  if (value < 0.45) return "0.30-0.45";
+  if (value < 0.6) return "0.45-0.60";
+  return ">=0.60";
+}
+
+function renderTrendChart(rows) {
+  const points = rows
+    .map((row) => ({
+      label: row.date,
+      value: Number(row.average_ndvi),
+    }))
+    .filter((row) => Number.isFinite(row.value));
+
+  renderChart("ndvi-trend-chart", {
+    type: "line",
+    data: {
+      labels: points.map((point) => point.label),
+      datasets: [
+        {
+          label: "Average NDVI",
+          data: points.map((point) => point.value),
+          borderColor: palette.green,
+          backgroundColor: "rgba(27, 127, 90, 0.18)",
+          fill: true,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          tension: 0.32,
+        },
+      ],
+    },
+    options: chartBaseOptions({
+      scales: {
+        x: {
+          ticks: { color: palette.muted, maxRotation: 0 },
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: { color: palette.muted },
+          grid: { color: "rgba(217, 225, 220, 0.7)" },
+        },
+      },
+    }),
   });
+}
+
+function renderNdviDistributionChart() {
+  const labels = ["<0.15", "0.15-0.30", "0.30-0.45", "0.45-0.60", ">=0.60"];
+  const counts = Object.fromEntries(labels.map((label) => [label, 0]));
+  gridRows.forEach((row) => {
+    const bucket = ndviBucket(Number(row.average_ndvi));
+    if (bucket) counts[bucket] += 1;
+  });
+
+  renderChart("ndvi-distribution-chart", {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Grid count",
+          data: labels.map((label) => counts[label]),
+          backgroundColor: [palette.red, palette.amber, palette.yellow, palette.lightGreen, palette.green],
+          borderRadius: 6,
+        },
+      ],
+    },
+    options: chartBaseOptions({
+      plugins: {
+        ...chartBaseOptions().plugins,
+        legend: { display: false },
+      },
+    }),
+  });
+}
+
+function renderLandCoverChart() {
+  const totals = {};
+  gridRows.forEach((row) => {
+    Object.entries(row.land_cover_percentages || {}).forEach(([code, percent]) => {
+      totals[code] = (totals[code] || 0) + Number(percent);
+    });
+  });
+  const entries = Object.entries(totals)
+    .filter(([, value]) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 7);
+
+  renderChart("land-cover-chart", {
+    type: "doughnut",
+    data: {
+      labels: entries.map(([code]) => `Class ${code}`),
+      datasets: [
+        {
+          data: entries.map(([, value]) => value),
+          backgroundColor: [
+            palette.green,
+            palette.lightGreen,
+            palette.yellow,
+            palette.amber,
+            palette.red,
+            palette.blue,
+            palette.slate,
+          ],
+          borderColor: "#ffffff",
+          borderWidth: 3,
+        },
+      ],
+    },
+    options: chartBaseOptions({
+      cutout: "62%",
+      scales: {},
+      plugins: {
+        ...chartBaseOptions().plugins,
+        legend: {
+          position: "bottom",
+          labels: {
+            color: palette.ink,
+            boxWidth: 12,
+            boxHeight: 12,
+            usePointStyle: true,
+          },
+        },
+      },
+    }),
+  });
+}
+
+function renderContextChart(context) {
+  const rows = context.urban_context_statistics || [];
+  const populationTotal = sumFinite(rows.map((row) => row.population_count));
+  const greenAverage = averageFinite(rows.map((row) => row.green_cover_percentage));
+  const builtUpSquareKm = sumFinite(rows.map((row) => row.built_up_area_square_meters)) / 1_000_000;
+  const roadDensityAverage = averageFinite(rows.map((row) => row.road_density_km_per_square_km));
+
+  renderChart("context-chart", {
+    type: "radar",
+    data: {
+      labels: ["Population", "Green cover", "Built-up area", "Road density"],
+      datasets: [
+        {
+          label: "Latest context",
+          data: [
+            populationTotal ? Math.log10(populationTotal + 1) : 0,
+            finiteOrZero(greenAverage),
+            builtUpSquareKm,
+            finiteOrZero(roadDensityAverage),
+          ],
+          backgroundColor: "rgba(59, 111, 143, 0.2)",
+          borderColor: palette.blue,
+          pointBackgroundColor: palette.blue,
+          pointRadius: 4,
+        },
+      ],
+    },
+    options: chartBaseOptions({
+      scales: {
+        r: {
+          beginAtZero: true,
+          ticks: { color: palette.muted, backdropColor: "transparent" },
+          grid: { color: "rgba(217, 225, 220, 0.9)" },
+          angleLines: { color: "rgba(217, 225, 220, 0.9)" },
+          pointLabels: { color: palette.ink, font: { size: 12 } },
+        },
+      },
+    }),
+  });
+}
+
+function renderStatusChart(metadata) {
+  const statuses = metadata.reduce((counts, row) => {
+    const status = row.processing_status || "unknown";
+    counts[status] = (counts[status] || 0) + 1;
+    return counts;
+  }, {});
+  const labels = Object.keys(statuses);
+
+  renderChart("status-chart", {
+    type: "pie",
+    data: {
+      labels,
+      datasets: [
+        {
+          data: labels.map((label) => statuses[label]),
+          backgroundColor: labels.map((label) => label === "processed" ? palette.green : palette.amber),
+          borderColor: "#ffffff",
+          borderWidth: 3,
+        },
+      ],
+    },
+    options: chartBaseOptions({
+      scales: {},
+      plugins: {
+        ...chartBaseOptions().plugins,
+        legend: {
+          position: "bottom",
+          labels: {
+            color: palette.ink,
+            boxWidth: 12,
+            boxHeight: 12,
+            usePointStyle: true,
+          },
+        },
+      },
+    }),
+  });
+}
+
+function renderCharts({ dashboard, metadata, context }) {
+  if (typeof Chart === "undefined") {
+    setStatus("Chart.js is unavailable. Check your internet connection or CDN access.");
+    return;
+  }
+  renderTrendChart(dashboard.trend || []);
+  renderNdviDistributionChart();
+  renderLandCoverChart();
+  renderContextChart(context);
+  renderStatusChart(metadata);
 }
 
 function renderContextLayer(context) {
@@ -171,6 +447,32 @@ function renderMetadataTable(rows) {
   });
 }
 
+function renderInsights({ dashboard, context }) {
+  const node = document.getElementById("dashboard-insights");
+  const contextRows = context.urban_context_statistics || [];
+  const populationTotal = sumFinite(contextRows.map((row) => row.population_count));
+  const greenAverage = averageFinite(contextRows.map((row) => row.green_cover_percentage));
+  const roadDensityAverage = averageFinite(contextRows.map((row) => row.road_density_km_per_square_km));
+  const trend = dashboard.trend || [];
+  const previous = Number(trend.at(-2)?.average_ndvi);
+  const current = Number(trend.at(-1)?.average_ndvi);
+  const change = Number.isFinite(previous) && Number.isFinite(current) ? current - previous : null;
+  const items = [
+    ["NDVI change", change === null ? "--" : `${change >= 0 ? "+" : ""}${formatNumber(change)}`],
+    ["Average green cover", greenAverage === null ? "--" : `${formatNumber(greenAverage)}%`],
+    ["Average road density", roadDensityAverage === null ? "--" : `${formatNumber(roadDensityAverage)} km/sq km`],
+    ["Context population", populationTotal > 0 ? formatCompactNumber(populationTotal) : "--"],
+  ];
+
+  node.innerHTML = "";
+  items.forEach(([label, value]) => {
+    const item = document.createElement("div");
+    item.className = "insight-item";
+    item.innerHTML = `<span>${label}</span><strong>${value}</strong>`;
+    node.appendChild(item);
+  });
+}
+
 async function loadDataDashboard() {
   setStatus("Loading data from the local API...");
   const [dashboard, metadata, context, grids] = await Promise.all([
@@ -185,7 +487,8 @@ async function loadDataDashboard() {
   renderContextLayer(context);
   renderGridTable();
   renderMetadataTable(metadata);
-  renderTrend(dashboard.trend || []);
+  renderCharts({ dashboard, metadata, context });
+  renderInsights({ dashboard, context });
   setStatus(`Loaded ${gridRows.length.toLocaleString()} grid rows.`);
 }
 

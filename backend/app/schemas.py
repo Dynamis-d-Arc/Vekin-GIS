@@ -10,6 +10,13 @@ class AreaDateRequest(BaseModel):
     max_cloud_cover: float = 40
 
 
+class AreaDateRangeRequest(BaseModel):
+    area: dict[str, Any] = Field(..., description="GeoJSON geometry in EPSG:4326")
+    start_date: date
+    end_date: date
+    max_cloud_cover: float = 40
+
+
 class ChangeDetectionRequest(BaseModel):
     area: dict[str, Any]
     start_date: date
@@ -34,3 +41,10 @@ class ProcessResponse(BaseModel):
     status: str
     grids_processed: int
     ndvi_temp_path: str | None
+
+
+class ProcessRangeResponse(BaseModel):
+    status: str
+    images_processed: int
+    grids_processed: int
+    results: list[ProcessResponse]

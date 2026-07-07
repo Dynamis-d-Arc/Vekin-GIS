@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.context_layers import create_context_layers
 from app.db import close_pool, open_pool
 from app.ndvi import calculate_grid_statistics, generate_ndvi
-from app.planetary import find_sentinel_item
+from app.planetary import find_sentinel_item, find_sentinel_items_for_range
 from app.repositories import (
     ensure_context_statistics_tables,
     get_context_layers,
@@ -21,7 +21,14 @@ from app.repositories import (
     insert_satellite_image,
     update_satellite_status,
 )
-from app.schemas import AreaDateRequest, ChangeDetectionRequest, ContextLayersRequest, ProcessResponse
+from app.schemas import (
+    AreaDateRangeRequest,
+    AreaDateRequest,
+    ChangeDetectionRequest,
+    ContextLayersRequest,
+    ProcessRangeResponse,
+    ProcessResponse,
+)
 
 
 settings = get_settings()
@@ -73,17 +80,7 @@ def search_images(request: AreaDateRequest) -> dict[str, Any]:
     }
 
 
-@app.post("/api/ndvi/process", response_model=ProcessResponse)
-def process_ndvi(request: AreaDateRequest) -> ProcessResponse:
-    try:
-        item = find_sentinel_item(
-            area_geojson=request.area,
-            capture_date=request.date,
-            max_cloud_cover=request.max_cloud_cover,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
+def _process_ndvi_item(*, item: dict[str, Any], area_geojson: dict[str, Any]) -> ProcessResponse:
     image_id = insert_satellite_image(
         capture_date=item["capture_date"],
         satellite=item["satellite"],
@@ -97,19 +94,19 @@ def process_ndvi(request: AreaDateRequest) -> ProcessResponse:
         ndvi_path = generate_ndvi(
             red_url=item["red_url"],
             nir_url=item["nir_url"],
-            area_geojson=request.area,
+            area_geojson=area_geojson,
             item_id=item["id"],
         )
         rows = calculate_grid_statistics(
             ndvi_path=ndvi_path,
-            area_geojson=request.area,
+            area_geojson=area_geojson,
             capture_date=item["capture_date"],
         )
         count = insert_ndvi_statistics(rows, image_id)
         update_satellite_status(image_id, "complete")
-    except Exception as exc:
+    except Exception:
         update_satellite_status(image_id, "failed")
-        raise HTTPException(status_code=500, detail=f"NDVI processing failed: {exc}") from exc
+        raise
 
     return ProcessResponse(
         satellite_image_id=image_id,
@@ -117,6 +114,50 @@ def process_ndvi(request: AreaDateRequest) -> ProcessResponse:
         status="complete",
         grids_processed=count,
         ndvi_temp_path=str(ndvi_path),
+    )
+
+
+@app.post("/api/ndvi/process", response_model=ProcessResponse)
+def process_ndvi(request: AreaDateRequest) -> ProcessResponse:
+    try:
+        item = find_sentinel_item(
+            area_geojson=request.area,
+            capture_date=request.date,
+            max_cloud_cover=request.max_cloud_cover,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        return _process_ndvi_item(item=item, area_geojson=request.area)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"NDVI processing failed: {exc}") from exc
+
+
+@app.post("/api/ndvi/process-range", response_model=ProcessRangeResponse)
+def process_ndvi_range(request: AreaDateRangeRequest) -> ProcessRangeResponse:
+    try:
+        items = find_sentinel_items_for_range(
+            area_geojson=request.area,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            max_cloud_cover=request.max_cloud_cover,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    results: list[ProcessResponse] = []
+    for item in items:
+        try:
+            results.append(_process_ndvi_item(item=item, area_geojson=request.area))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"NDVI range processing failed: {exc}") from exc
+
+    return ProcessRangeResponse(
+        status="complete",
+        images_processed=len(results),
+        grids_processed=sum(result.grids_processed for result in results),
+        results=results,
     )
 
 

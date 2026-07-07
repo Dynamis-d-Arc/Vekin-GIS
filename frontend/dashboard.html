@@ -8,10 +8,11 @@
   </head>
   <body>
     <main class="data-dashboard">
-      <header class="dashboard-header">
+      <header class="dashboard-header dashboard-hero">
         <div>
           <span>Vekin GIS</span>
           <h1>Data Dashboard</h1>
+          <p>Operational view of NDVI, context layers, population, road density, and satellite processing runs.</p>
         </div>
         <div class="dashboard-actions">
           <button id="refresh-dashboard" type="button">Refresh</button>
@@ -24,48 +25,115 @@
       <section class="data-section">
         <h2>Overview</h2>
         <div class="metric-grid dashboard-metrics">
-          <div>
+          <div class="kpi-card">
             <span>Total grids</span>
             <strong id="total-grids">--</strong>
+            <small>stored cells</small>
           </div>
-          <div>
+          <div class="kpi-card">
             <span>NDVI grids</span>
             <strong id="ndvi-grids">--</strong>
+            <small>with imagery stats</small>
           </div>
-          <div>
+          <div class="kpi-card">
             <span>Context grids</span>
             <strong id="context-grids">--</strong>
+            <small>with urban data</small>
           </div>
-          <div>
+          <div class="kpi-card">
             <span>Road density grids</span>
             <strong id="road-grids">--</strong>
+            <small>OSM-derived</small>
           </div>
-          <div>
+          <div class="kpi-card">
             <span>Average NDVI</span>
             <strong id="dashboard-avg-ndvi">--</strong>
+            <small>latest aggregate</small>
           </div>
-          <div>
+          <div class="kpi-card">
             <span>Total population</span>
             <strong id="dashboard-population">--</strong>
+            <small>latest context</small>
           </div>
-          <div>
+          <div class="kpi-card">
             <span>Built-up sq km</span>
             <strong id="dashboard-built-up">--</strong>
+            <small>ESA WorldCover</small>
           </div>
-          <div>
+          <div class="kpi-card">
             <span>Avg road density</span>
             <strong id="dashboard-road-density">--</strong>
+            <small>km / sq km</small>
           </div>
         </div>
       </section>
 
-      <section class="data-section">
-        <h2>Latest Context Layer</h2>
-        <div id="context-layer" class="metadata-list"></div>
+      <section class="analytics-grid">
+        <article class="chart-panel hero-chart">
+          <div>
+            <h2>NDVI Trend</h2>
+            <span>Average NDVI by capture date</span>
+          </div>
+          <div class="chart-frame tall-chart">
+            <canvas id="ndvi-trend-chart"></canvas>
+          </div>
+        </article>
+        <article class="chart-panel">
+          <div>
+            <h2>Land Cover Mix</h2>
+            <span>Latest dominant land-cover share</span>
+          </div>
+          <div class="chart-frame">
+            <canvas id="land-cover-chart"></canvas>
+          </div>
+        </article>
+        <article class="chart-panel">
+          <div>
+            <h2>NDVI Distribution</h2>
+            <span>Grid count by NDVI range</span>
+          </div>
+          <div class="chart-frame">
+            <canvas id="ndvi-distribution-chart"></canvas>
+          </div>
+        </article>
+        <article class="chart-panel">
+          <div>
+            <h2>Urban Context</h2>
+            <span>Population, green, built-up, roads</span>
+          </div>
+          <div class="chart-frame">
+            <canvas id="context-chart"></canvas>
+          </div>
+        </article>
+        <article class="chart-panel">
+          <div>
+            <h2>Processing Status</h2>
+            <span>Satellite metadata records</span>
+          </div>
+          <div class="chart-frame">
+            <canvas id="status-chart"></canvas>
+          </div>
+        </article>
+      </section>
+
+      <section class="data-section two-column-section">
+        <div>
+          <h2>Latest Context Layer</h2>
+          <div id="context-layer" class="metadata-list"></div>
+        </div>
+        <div class="insight-panel">
+          <h2>Analyst Summary</h2>
+          <div id="dashboard-insights" class="insight-list"></div>
+        </div>
       </section>
 
       <section class="data-section">
-        <h2>Grid Data</h2>
+        <div class="section-heading">
+          <div>
+            <h2>Grid Data Rows</h2>
+            <span>Detailed per-cell output from NDVI and context processing</span>
+          </div>
+        </div>
         <div class="table-toolbar">
           <input id="grid-filter" type="search" placeholder="Filter grid ID" />
           <span id="grid-count">--</span>
@@ -112,12 +180,9 @@
             </table>
           </div>
         </div>
-        <div>
-          <h2>Historical Trend</h2>
-          <div id="dashboard-trend" class="trend large-trend"></div>
-        </div>
       </section>
     </main>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
     <script src="./dashboard.js"></script>
   </body>
 </html>

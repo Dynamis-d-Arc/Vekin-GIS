@@ -9,6 +9,28 @@ from shapely.geometry import box, mapping, shape
 from app.config import get_settings
 
 
+def _sentinel_item_payload(item: Any, area_geojson: dict[str, Any]) -> dict[str, Any]:
+    area = shape(area_geojson)
+    signed = planetary_computer.sign(item)
+    bbox_geojson = mapping(box(*signed.bbox).intersection(area.envelope))
+    red_asset = signed.assets.get("B04")
+    nir_asset = signed.assets.get("B08")
+    if not red_asset or not nir_asset:
+        raise LookupError("Matched Sentinel-2 item does not expose B04 and B08 assets.")
+
+    return {
+        "id": signed.id,
+        "capture_date": signed.datetime,
+        "satellite": signed.properties.get("platform", "Sentinel-2"),
+        "cloud_cover": signed.properties.get("eo:cloud_cover"),
+        "bbox": signed.bbox,
+        "bbox_geojson": bbox_geojson,
+        "red_url": red_asset.href,
+        "nir_url": nir_asset.href,
+        "temporary_image_url": signed.get_self_href(),
+    }
+
+
 def find_sentinel_item(
     *,
     area_geojson: dict[str, Any],
@@ -50,21 +72,52 @@ def find_sentinel_item(
             f"{fallback} Try an older date or a higher cloud-cover value."
         )
 
-    item = planetary_computer.sign(items[0])
-    bbox_geojson = mapping(box(*item.bbox).intersection(area.envelope))
-    red_asset = item.assets.get("B04")
-    nir_asset = item.assets.get("B08")
-    if not red_asset or not nir_asset:
-        raise LookupError("Matched Sentinel-2 item does not expose B04 and B08 assets.")
+    return _sentinel_item_payload(items[0], area_geojson)
 
-    return {
-        "id": item.id,
-        "capture_date": item.datetime,
-        "satellite": item.properties.get("platform", "Sentinel-2"),
-        "cloud_cover": item.properties.get("eo:cloud_cover"),
-        "bbox": item.bbox,
-        "bbox_geojson": bbox_geojson,
-        "red_url": red_asset.href,
-        "nir_url": nir_asset.href,
-        "temporary_image_url": item.get_self_href(),
-    }
+
+def find_sentinel_items_for_range(
+    *,
+    area_geojson: dict[str, Any],
+    start_date: date,
+    end_date: date,
+    max_cloud_cover: float,
+) -> list[dict[str, Any]]:
+    if start_date > end_date:
+        raise LookupError("Start date must be before or equal to end date.")
+
+    settings = get_settings()
+    client = Client.open(settings.planetary_computer_stac_url)
+    date_range = f"{start_date.isoformat()}/{end_date.isoformat()}"
+    search = client.search(
+        collections=[settings.sentinel_collection],
+        intersects=area_geojson,
+        datetime=date_range,
+        query={"eo:cloud_cover": {"lt": max_cloud_cover}},
+        sortby=[
+            {"field": "datetime", "direction": "asc"},
+            {"field": "eo:cloud_cover", "direction": "asc"},
+        ],
+        max_items=100,
+    )
+
+    best_by_day: dict[date, Any] = {}
+    for item in search.items():
+        if not item.datetime:
+            continue
+        day = item.datetime.date()
+        current = best_by_day.get(day)
+        current_cloud = current.properties.get("eo:cloud_cover") if current else None
+        item_cloud = item.properties.get("eo:cloud_cover")
+        if current is None or (item_cloud is not None and (current_cloud is None or item_cloud < current_cloud)):
+            best_by_day[day] = item
+
+    if not best_by_day:
+        raise LookupError(
+            "No Sentinel-2 images matched the selected area. "
+            f"Searched {date_range} with cloud cover under {max_cloud_cover}%."
+        )
+
+    return [
+        _sentinel_item_payload(item, area_geojson)
+        for _, item in sorted(best_by_day.items())
+    ]
