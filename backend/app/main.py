@@ -11,9 +11,11 @@ from app.db import close_pool, open_pool
 from app.ndvi import calculate_grid_statistics, generate_ndvi
 from app.planetary import find_sentinel_item
 from app.repositories import (
+    ensure_context_statistics_tables,
     get_context_layers,
     get_dashboard,
     get_grid_layer,
+    get_latest_context_statistics,
     get_metadata,
     insert_ndvi_statistics,
     insert_satellite_image,
@@ -39,6 +41,7 @@ app.add_middleware(
 @app.on_event("startup")
 def startup() -> None:
     open_pool()
+    ensure_context_statistics_tables()
 
 
 @app.on_event("shutdown")
@@ -159,6 +162,11 @@ def saved_context_layers(limit: int = Query(default=10, ge=1, le=50)) -> list[di
         }
         for row in rows
     ]
+
+
+@app.get("/api/context/statistics/latest")
+def latest_context_statistics() -> dict[str, Any]:
+    return get_latest_context_statistics()
 
 
 @app.post("/api/change-detection")

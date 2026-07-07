@@ -1,13 +1,43 @@
 from datetime import datetime
 from typing import Any
 
+from psycopg import sql
 from psycopg.types.json import Json
 
+from app.config import get_settings
 from app.db import get_connection
 
 
 DEFAULT_GRID_SIZE_METERS = 1000
 MAX_PROCESSING_GRIDS = 2500
+DEFAULT_CONTEXT_STATISTICS_SCHEMA = "public"
+
+
+def get_context_statistics_schema(conn) -> str:
+    settings = get_settings()
+    configured_schema = (settings.context_statistics_schema or "").strip()
+    if configured_schema:
+        return configured_schema
+
+    reference_table = settings.context_statistics_schema_reference_table.strip()
+    row = conn.execute(
+        """
+        SELECT table_schema
+        FROM information_schema.tables
+        WHERE upper(table_name) = upper(%s)
+          AND table_schema NOT IN ('information_schema', 'pg_catalog')
+        ORDER BY (table_schema = 'public') DESC, table_schema
+        LIMIT 1
+        """,
+        (reference_table,),
+    ).fetchone()
+    if row:
+        return row["table_schema"]
+    return DEFAULT_CONTEXT_STATISTICS_SCHEMA
+
+
+def _stats_table(schema: str, table_name: str) -> sql.Identifier:
+    return sql.Identifier(schema, table_name)
 
 
 def insert_satellite_image(
@@ -53,6 +83,97 @@ def update_satellite_status(image_id: str, status: str) -> None:
         conn.execute(
             "UPDATE satellite_images SET processing_status = %s WHERE id = %s",
             (status, image_id),
+        )
+        conn.commit()
+
+
+def ensure_context_statistics_tables() -> None:
+    with get_connection() as conn:
+        stats_schema = get_context_statistics_schema(conn)
+        conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(stats_schema)))
+        conn.execute(
+            sql.SQL(
+                """
+            CREATE TABLE IF NOT EXISTS {} (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              grid_id text NOT NULL REFERENCES public.grids(grid_id) ON DELETE CASCADE,
+              context_layer_id uuid NOT NULL REFERENCES public.context_layers(id) ON DELETE CASCADE,
+              average_elevation double precision,
+              minimum_elevation double precision,
+              maximum_elevation double precision,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (grid_id, context_layer_id)
+            )
+            """
+            ).format(_stats_table(stats_schema, "dem_statistics"))
+        )
+        conn.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (grid_id)").format(
+                sql.Identifier(f"idx_{stats_schema}_dem_statistics_grid_id"),
+                _stats_table(stats_schema, "dem_statistics"),
+            )
+        )
+        conn.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (context_layer_id)").format(
+                sql.Identifier(f"idx_{stats_schema}_dem_statistics_context_layer_id"),
+                _stats_table(stats_schema, "dem_statistics"),
+            )
+        )
+        conn.execute(
+            sql.SQL(
+                """
+            CREATE TABLE IF NOT EXISTS {} (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              grid_id text NOT NULL REFERENCES public.grids(grid_id) ON DELETE CASCADE,
+              context_layer_id uuid NOT NULL REFERENCES public.context_layers(id) ON DELETE CASCADE,
+              dominant_class integer,
+              class_percentages jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (grid_id, context_layer_id)
+            )
+            """
+            ).format(_stats_table(stats_schema, "land_cover_statistics"))
+        )
+        conn.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (grid_id)").format(
+                sql.Identifier(f"idx_{stats_schema}_land_cover_statistics_grid_id"),
+                _stats_table(stats_schema, "land_cover_statistics"),
+            )
+        )
+        conn.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (context_layer_id)").format(
+                sql.Identifier(f"idx_{stats_schema}_land_cover_statistics_context_layer_id"),
+                _stats_table(stats_schema, "land_cover_statistics"),
+            )
+        )
+        conn.execute(
+            sql.SQL(
+                """
+            CREATE TABLE IF NOT EXISTS {} (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              grid_id text NOT NULL REFERENCES public.grids(grid_id) ON DELETE CASCADE,
+              context_layer_id uuid NOT NULL REFERENCES public.context_layers(id) ON DELETE CASCADE,
+              population_count double precision,
+              built_up_area_square_meters double precision,
+              green_cover_percentage double precision,
+              road_density_km_per_square_km double precision,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (grid_id, context_layer_id)
+            )
+            """
+            ).format(_stats_table(stats_schema, "urban_context_statistics"))
+        )
+        conn.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (grid_id)").format(
+                sql.Identifier(f"idx_{stats_schema}_urban_context_statistics_grid_id"),
+                _stats_table(stats_schema, "urban_context_statistics"),
+            )
+        )
+        conn.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (context_layer_id)").format(
+                sql.Identifier(f"idx_{stats_schema}_urban_context_statistics_context_layer_id"),
+                _stats_table(stats_schema, "urban_context_statistics"),
+            )
         )
         conn.commit()
 
@@ -133,6 +254,125 @@ def get_context_layers(limit: int = 20) -> list[dict[str, Any]]:
             """,
             (limit,),
         ).fetchall()
+
+
+def insert_context_statistics(
+    *,
+    context_layer_id: str,
+    dem_rows: list[dict[str, Any]],
+    land_cover_rows: list[dict[str, Any]],
+    urban_context_rows: list[dict[str, Any]] | None = None,
+) -> None:
+    with get_connection() as conn:
+        stats_schema = get_context_statistics_schema(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                sql.SQL("DELETE FROM {} WHERE context_layer_id = %s").format(
+                    _stats_table(stats_schema, "dem_statistics")
+                ),
+                (context_layer_id,),
+            )
+            cur.execute(
+                sql.SQL("DELETE FROM {} WHERE context_layer_id = %s").format(
+                    _stats_table(stats_schema, "land_cover_statistics")
+                ),
+                (context_layer_id,),
+            )
+            cur.execute(
+                sql.SQL("DELETE FROM {} WHERE context_layer_id = %s").format(
+                    _stats_table(stats_schema, "urban_context_statistics")
+                ),
+                (context_layer_id,),
+            )
+            if dem_rows:
+                cur.executemany(
+                    sql.SQL(
+                        """
+                    INSERT INTO {} (
+                      grid_id,
+                      context_layer_id,
+                      average_elevation,
+                      minimum_elevation,
+                      maximum_elevation
+                    )
+                    VALUES (
+                      %(grid_id)s,
+                      %(context_layer_id)s,
+                      %(average_elevation)s,
+                      %(minimum_elevation)s,
+                      %(maximum_elevation)s
+                    )
+                    ON CONFLICT (grid_id, context_layer_id)
+                    DO UPDATE SET
+                      average_elevation = EXCLUDED.average_elevation,
+                      minimum_elevation = EXCLUDED.minimum_elevation,
+                      maximum_elevation = EXCLUDED.maximum_elevation
+                    """
+                    ).format(_stats_table(stats_schema, "dem_statistics")),
+                    [{**row, "context_layer_id": context_layer_id} for row in dem_rows],
+                )
+            if land_cover_rows:
+                cur.executemany(
+                    sql.SQL(
+                        """
+                    INSERT INTO {} (
+                      grid_id,
+                      context_layer_id,
+                      dominant_class,
+                      class_percentages
+                    )
+                    VALUES (
+                      %(grid_id)s,
+                      %(context_layer_id)s,
+                      %(dominant_class)s,
+                      %(class_percentages)s
+                    )
+                    ON CONFLICT (grid_id, context_layer_id)
+                    DO UPDATE SET
+                      dominant_class = EXCLUDED.dominant_class,
+                      class_percentages = EXCLUDED.class_percentages
+                    """
+                    ).format(_stats_table(stats_schema, "land_cover_statistics")),
+                    [
+                        {
+                            **row,
+                            "context_layer_id": context_layer_id,
+                            "class_percentages": Json(row["class_percentages"]),
+                        }
+                        for row in land_cover_rows
+                    ],
+                )
+            if urban_context_rows:
+                cur.executemany(
+                    sql.SQL(
+                        """
+                    INSERT INTO {} (
+                      grid_id,
+                      context_layer_id,
+                      population_count,
+                      built_up_area_square_meters,
+                      green_cover_percentage,
+                      road_density_km_per_square_km
+                    )
+                    VALUES (
+                      %(grid_id)s,
+                      %(context_layer_id)s,
+                      %(population_count)s,
+                      %(built_up_area_square_meters)s,
+                      %(green_cover_percentage)s,
+                      %(road_density_km_per_square_km)s
+                    )
+                    ON CONFLICT (grid_id, context_layer_id)
+                    DO UPDATE SET
+                      population_count = EXCLUDED.population_count,
+                      built_up_area_square_meters = EXCLUDED.built_up_area_square_meters,
+                      green_cover_percentage = EXCLUDED.green_cover_percentage,
+                      road_density_km_per_square_km = EXCLUDED.road_density_km_per_square_km
+                    """
+                    ).format(_stats_table(stats_schema, "urban_context_statistics")),
+                    [{**row, "context_layer_id": context_layer_id} for row in urban_context_rows],
+                )
+        conn.commit()
 
 
 def ensure_grids_for_area(
@@ -295,23 +535,34 @@ def get_metadata(limit: int = 50) -> list[dict[str, Any]]:
 
 
 def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
-    date_filter = ""
+    date_filter = sql.SQL("")
     params: dict[str, Any] = {}
     if capture_date:
-        date_filter = "AND ns.capture_date::date = %(capture_date)s"
+        date_filter = sql.SQL("AND ns.capture_date::date = %(capture_date)s")
         params["capture_date"] = capture_date.date()
 
     with get_connection() as conn:
+        stats_schema = get_context_statistics_schema(conn)
         stats_exist = conn.execute("SELECT EXISTS (SELECT 1 FROM ndvi_statistics)").fetchone()["exists"]
         rows = conn.execute(
-            f"""
+            sql.SQL(
+                """
             SELECT
               g.grid_id,
               ST_AsGeoJSON(g.geometry)::json AS geometry,
               ns.average_ndvi,
               ns.minimum_ndvi,
               ns.maximum_ndvi,
-              ns.capture_date
+              ns.capture_date,
+              ds.average_elevation,
+              ds.minimum_elevation,
+              ds.maximum_elevation,
+              lcs.dominant_class,
+              lcs.class_percentages,
+              ucs.population_count,
+              ucs.built_up_area_square_meters,
+              ucs.green_cover_percentage,
+              ucs.road_density_km_per_square_km
             FROM grids g
             LEFT JOIN LATERAL (
               SELECT *
@@ -321,9 +572,39 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
               ORDER BY ns.capture_date DESC
               LIMIT 1
             ) ns ON true
+            LEFT JOIN LATERAL (
+              SELECT ds.*
+              FROM {dem_statistics} ds
+              JOIN context_layers cl ON cl.id = ds.context_layer_id
+              WHERE ds.grid_id = g.grid_id
+              ORDER BY cl.updated_at DESC
+              LIMIT 1
+            ) ds ON true
+            LEFT JOIN LATERAL (
+              SELECT lcs.*
+              FROM {land_cover_statistics} lcs
+              JOIN context_layers cl ON cl.id = lcs.context_layer_id
+              WHERE lcs.grid_id = g.grid_id
+              ORDER BY cl.updated_at DESC
+              LIMIT 1
+            ) lcs ON true
+            LEFT JOIN LATERAL (
+              SELECT ucs.*
+              FROM {urban_context_statistics} ucs
+              JOIN context_layers cl ON cl.id = ucs.context_layer_id
+              WHERE ucs.grid_id = g.grid_id
+              ORDER BY cl.updated_at DESC
+              LIMIT 1
+            ) ucs ON true
             WHERE %(show_all_grids)s OR ns.capture_date IS NOT NULL
             ORDER BY g.grid_id
-            """,
+            """
+            ).format(
+                date_filter=date_filter,
+                dem_statistics=_stats_table(stats_schema, "dem_statistics"),
+                land_cover_statistics=_stats_table(stats_schema, "land_cover_statistics"),
+                urban_context_statistics=_stats_table(stats_schema, "urban_context_statistics"),
+            ),
             {"show_all_grids": not stats_exist, **params},
         ).fetchall()
 
@@ -339,10 +620,103 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
                     "minimum_ndvi": row["minimum_ndvi"],
                     "maximum_ndvi": row["maximum_ndvi"],
                     "capture_date": row["capture_date"].isoformat() if row["capture_date"] else None,
+                    "average_elevation": row["average_elevation"],
+                    "minimum_elevation": row["minimum_elevation"],
+                    "maximum_elevation": row["maximum_elevation"],
+                    "dominant_land_cover_class": row["dominant_class"],
+                    "land_cover_percentages": row["class_percentages"] or {},
+                    "population_count": row["population_count"],
+                    "built_up_area_square_meters": row["built_up_area_square_meters"],
+                    "green_cover_percentage": row["green_cover_percentage"],
+                    "road_density_km_per_square_km": row["road_density_km_per_square_km"],
                 },
             }
             for row in rows
         ],
+    }
+
+
+def get_latest_context_statistics() -> dict[str, Any]:
+    with get_connection() as conn:
+        stats_schema = get_context_statistics_schema(conn)
+        context_layer = conn.execute(
+            """
+            SELECT
+              id::text,
+              area_hash,
+              dem_url,
+              land_cover_url,
+              dem_source,
+              land_cover_source,
+              created_at,
+              updated_at
+            FROM context_layers
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not context_layer:
+            return {
+                "context_layer": None,
+                "dem_statistics": [],
+                "land_cover_statistics": [],
+                "urban_context_statistics": [],
+            }
+
+        dem_rows = conn.execute(
+            sql.SQL(
+                """
+            SELECT
+              grid_id,
+              average_elevation,
+              minimum_elevation,
+              maximum_elevation,
+              created_at
+            FROM {}
+            WHERE context_layer_id = %s
+            ORDER BY grid_id
+            """
+            ).format(_stats_table(stats_schema, "dem_statistics")),
+            (context_layer["id"],),
+        ).fetchall()
+        land_cover_rows = conn.execute(
+            sql.SQL(
+                """
+            SELECT
+              grid_id,
+              dominant_class,
+              class_percentages,
+              created_at
+            FROM {}
+            WHERE context_layer_id = %s
+            ORDER BY grid_id
+            """
+            ).format(_stats_table(stats_schema, "land_cover_statistics")),
+            (context_layer["id"],),
+        ).fetchall()
+        urban_context_rows = conn.execute(
+            sql.SQL(
+                """
+            SELECT
+              grid_id,
+              population_count,
+              built_up_area_square_meters,
+              green_cover_percentage,
+              road_density_km_per_square_km,
+              created_at
+            FROM {}
+            WHERE context_layer_id = %s
+            ORDER BY grid_id
+            """
+            ).format(_stats_table(stats_schema, "urban_context_statistics")),
+            (context_layer["id"],),
+        ).fetchall()
+
+    return {
+        "context_layer": context_layer,
+        "dem_statistics": dem_rows,
+        "land_cover_statistics": land_cover_rows,
+        "urban_context_statistics": urban_context_rows,
     }
 
 

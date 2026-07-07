@@ -11,6 +11,13 @@ class Settings(BaseSettings):
     api_public_base_url: str = "http://localhost:8000"
     ndvi_temp_dir: Path = Path("tmp/ndvi")
     context_temp_dir: Path = Path("tmp/context")
+    context_statistics_schema: str | None = None
+    context_statistics_schema_reference_table: str = "BKK_TMD_WEATHER_DATA"
+    worldpop_population_density_url: str = (
+        "https://worldpop.arcgis.com/arcgis/rest/services/"
+        "WorldPop_Population_Density_100m/ImageServer/exportImage"
+    )
+    worldpop_population_time_ms: int = 1577836800000
     cors_origins: str = "*"
     sentinel_search_days: int = 30
 

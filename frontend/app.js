@@ -14,6 +14,20 @@ function formatNumber(value) {
   return value === null || value === undefined ? "--" : Number(value).toFixed(3);
 }
 
+function formatCompactNumber(value) {
+  return value === null || value === undefined ? "--" : Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function formatSquareKilometers(value) {
+  return value === null || value === undefined ? "--" : (Number(value) / 1_000_000).toFixed(2);
+}
+
+function averageFinite(values) {
+  const finite = values.map(Number).filter(Number.isFinite);
+  if (!finite.length) return null;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
 function renderList(id, rows) {
   const node = document.getElementById(id);
   node.innerHTML = "";
@@ -127,6 +141,7 @@ let selectedArea = L.rectangle(bangkokBounds, {
 let drawMode = false;
 let firstCorner = null;
 let previewArea = null;
+let selectedGridLayer = null;
 const drawButton = document.getElementById("draw-box-button");
 const bboxLabel = document.getElementById("bbox-label");
 
@@ -292,6 +307,86 @@ function ndviColor(value) {
   return "#1b7f5a";
 }
 
+function defaultGridStyle(feature) {
+  return {
+    color: "#315c4b",
+    weight: 1,
+    fillColor: ndviColor(feature.properties.average_ndvi),
+    fillOpacity: feature.properties.average_ndvi === null ? 0.08 : 0.58,
+  };
+}
+
+function selectedGridStyle(feature) {
+  return {
+    ...defaultGridStyle(feature),
+    color: "#0f573d",
+    weight: 3,
+    fillOpacity: feature.properties.average_ndvi === null ? 0.16 : 0.72,
+  };
+}
+
+function renderUrbanContextValues({
+  title = "Urban Context",
+  populationCount = null,
+  builtUpAreaSquareMeters = null,
+  greenCoverPercentage = null,
+  roadDensityKmPerSquareKm = null,
+}) {
+  document.getElementById("urban-context-title").textContent = title;
+  document.getElementById("population-count").textContent =
+    populationCount !== null && populationCount !== undefined ? formatCompactNumber(populationCount) : "--";
+  document.getElementById("built-up-area").textContent =
+    builtUpAreaSquareMeters !== null && builtUpAreaSquareMeters !== undefined ? formatSquareKilometers(builtUpAreaSquareMeters) : "--";
+  document.getElementById("green-cover").textContent =
+    greenCoverPercentage !== null && greenCoverPercentage !== undefined ? `${formatNumber(greenCoverPercentage)}%` : "--";
+  document.getElementById("road-density").textContent =
+    roadDensityKmPerSquareKm !== null && roadDensityKmPerSquareKm !== undefined ? formatNumber(roadDensityKmPerSquareKm) : "--";
+}
+
+function renderSelectedGridInfo(feature) {
+  const p = feature.properties;
+  document.getElementById("avg-ndvi").textContent = formatNumber(p.average_ndvi);
+  document.getElementById("min-ndvi").textContent = formatNumber(p.minimum_ndvi);
+  document.getElementById("max-ndvi").textContent = formatNumber(p.maximum_ndvi);
+  document.getElementById("change-label").textContent = "Date";
+  document.getElementById("change-ndvi").textContent = p.capture_date
+    ? new Date(p.capture_date).toLocaleDateString()
+    : "--";
+  renderUrbanContextValues({
+    title: `Urban Context: ${p.grid_id}`,
+    populationCount: p.population_count,
+    builtUpAreaSquareMeters: p.built_up_area_square_meters,
+    greenCoverPercentage: p.green_cover_percentage,
+    roadDensityKmPerSquareKm: p.road_density_km_per_square_km,
+  });
+}
+
+function popupContent(p) {
+  return `
+    <strong>${p.grid_id}</strong><br>
+    Average NDVI: ${formatNumber(p.average_ndvi)}<br>
+    Min: ${formatNumber(p.minimum_ndvi)}<br>
+    Max: ${formatNumber(p.maximum_ndvi)}<br>
+    Population: ${formatCompactNumber(p.population_count)}<br>
+    Built-up area: ${formatSquareKilometers(p.built_up_area_square_meters)} sq km<br>
+    Green cover: ${formatNumber(p.green_cover_percentage)}%<br>
+    Road density: ${formatNumber(p.road_density_km_per_square_km)} km/sq km<br>
+    Date: ${p.capture_date || "No data"}
+  `;
+}
+
+function selectGridFeature(feature, layer) {
+  if (selectedGridLayer && selectedGridLayer !== layer) {
+    overlays.Grids.resetStyle(selectedGridLayer);
+  }
+  selectedGridLayer = layer;
+  layer.setStyle(selectedGridStyle(feature));
+  layer.bringToFront();
+  setSelectedBounds(layer.getBounds());
+  renderSelectedGridInfo(feature);
+  setStatus(`Selected ${feature.properties.grid_id}. Map and metrics now show this grid cell.`);
+}
+
 async function fetchJson(path, options) {
   const response = await fetch(`${API_BASE}${path}`, options);
   if (!response.ok) {
@@ -374,23 +469,20 @@ async function loadGridLayer(captureDate = null) {
   }
   overlays.Grids = L.geoJSON(grid, {
     pane: "ndviPane",
-    style: (feature) => ({
-      color: "#315c4b",
-      weight: 1,
-      fillColor: ndviColor(feature.properties.average_ndvi),
-      fillOpacity: feature.properties.average_ndvi === null ? 0.08 : 0.58,
-    }),
+    style: defaultGridStyle,
     onEachFeature: (feature, layer) => {
       const p = feature.properties;
-      layer.bindPopup(`
-        <strong>${p.grid_id}</strong><br>
-        Average NDVI: ${formatNumber(p.average_ndvi)}<br>
-        Min: ${formatNumber(p.minimum_ndvi)}<br>
-        Max: ${formatNumber(p.maximum_ndvi)}<br>
-        Date: ${p.capture_date || "No data"}
-      `);
+      layer.bindPopup(popupContent(p));
+      layer.on("click", (event) => {
+        if (event.originalEvent) {
+          L.DomEvent.stopPropagation(event.originalEvent);
+        }
+        selectGridFeature(feature, layer);
+        layer.openPopup();
+      });
     },
   }).addTo(map);
+  selectedGridLayer = null;
   layerControl.addOverlay(overlays.Grids, "Grid / NDVI");
 }
 
@@ -424,6 +516,7 @@ function renderTrend(rows) {
 
 async function loadDashboard() {
   const dashboard = await fetchJson("/api/dashboard");
+  document.getElementById("change-label").textContent = "Daily change";
   document.getElementById("avg-ndvi").textContent = formatNumber(dashboard.summary.average_ndvi);
   document.getElementById("min-ndvi").textContent = formatNumber(dashboard.summary.minimum_ndvi);
   document.getElementById("max-ndvi").textContent = formatNumber(dashboard.summary.maximum_ndvi);
@@ -454,6 +547,29 @@ async function loadMetadata() {
   });
 }
 
+async function loadUrbanContext() {
+  const context = await fetchJson("/api/context/statistics/latest");
+  const rows = context.urban_context_statistics || [];
+  const populationTotal = rows
+    .map((row) => Number(row.population_count))
+    .filter(Number.isFinite)
+    .reduce((sum, value) => sum + value, 0);
+  const builtUpTotal = rows
+    .map((row) => Number(row.built_up_area_square_meters))
+    .filter(Number.isFinite)
+    .reduce((sum, value) => sum + value, 0);
+  const greenAverage = averageFinite(rows.map((row) => row.green_cover_percentage));
+  const roadDensityAverage = averageFinite(rows.map((row) => row.road_density_km_per_square_km));
+
+  renderUrbanContextValues({
+    title: "Urban Context",
+    populationCount: populationTotal > 0 ? populationTotal : null,
+    builtUpAreaSquareMeters: builtUpTotal > 0 ? builtUpTotal : null,
+    greenCoverPercentage: greenAverage,
+    roadDensityKmPerSquareKm: roadDensityAverage,
+  });
+}
+
 document.getElementById("process-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const date = document.getElementById("date").value;
@@ -477,7 +593,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
     const contextSucceeded = await loadContextLayers(payload.area)
       .then(() => true)
       .catch(() => false);
-    await Promise.all([loadGridLayer(), loadDashboard(), loadMetadata()]);
+    await Promise.all([loadGridLayer(), loadDashboard(), loadMetadata(), loadUrbanContext()]);
     const contextFailed = !contextSucceeded;
     const suffix = contextFailed ? " DEM/land-cover context was not available for this area." : "";
     setStatus(`Complete. Processed ${result.grids_processed} grid cells for ${new Date(result.capture_date).toLocaleDateString()}.${suffix}`);
@@ -523,7 +639,7 @@ document.getElementById("date").addEventListener("change", () => {
     setStatus(`Grid refresh failed: ${error.message}`);
   });
 });
-Promise.all([loadLatestSavedContextLayer(), loadGridLayer(), loadDashboard(), loadMetadata()]).catch((error) => {
+Promise.all([loadLatestSavedContextLayer(), loadGridLayer(), loadDashboard(), loadMetadata(), loadUrbanContext()]).catch((error) => {
   document.getElementById("status").textContent = `Backend unavailable: ${error.message}`;
 });
 }

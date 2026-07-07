@@ -3,21 +3,30 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import urlretrieve
 
 import numpy as np
 import planetary_computer
 import rasterio
+from affine import Affine
 from pystac_client import Client
 from rasterio.enums import ColorInterp, Resampling
 from rasterio.merge import merge
+from rasterio.warp import transform_geom
+from rasterstats import zonal_stats
+from pyproj import Geod
 from shapely.geometry import box, mapping, shape
 
 from app.config import get_settings
-from app.repositories import upsert_context_layer
+from app.repositories import ensure_grids_for_area, insert_context_statistics, upsert_context_layer
 
 
 MAX_OVERLAY_PIXELS = 2400
 MAX_CONTEXT_AREA_DEGREES = 2.0
+BUILT_UP_CLASS = 50
+GREEN_COVER_CLASSES = {10, 20, 30, 40, 90, 95, 100}
+GEOD = Geod(ellps="WGS84")
 
 
 def _rgba_png(path: Path, rgba: np.ndarray) -> None:
@@ -65,13 +74,15 @@ def _read_mosaic(
     asset_key: str,
     bbox_values: tuple[float, float, float, float],
     resampling: Resampling,
-) -> np.ndarray:
+) -> tuple[np.ndarray, Affine, Any, np.ndarray]:
     datasets = [rasterio.open(href) for href in _asset_hrefs(collection, asset_key, bbox_values)]
     try:
-        mosaic, _ = merge(datasets, bounds=bbox_values)
+        mosaic, transform = merge(datasets, bounds=bbox_values)
+        crs = datasets[0].crs
+        data = mosaic[0]
         height, width = _scaled_shape(mosaic.shape[2], mosaic.shape[1])
         if height == mosaic.shape[1] and width == mosaic.shape[2]:
-            return mosaic[0]
+            return data, transform, crs, data
 
         with rasterio.MemoryFile() as memory_file:
             profile = datasets[0].profile.copy()
@@ -81,13 +92,43 @@ def _read_mosaic(
                 width=mosaic.shape[2],
                 count=mosaic.shape[0],
                 dtype=mosaic.dtype,
+                transform=transform,
             )
             with memory_file.open(**profile) as dataset:
                 dataset.write(mosaic)
-                return dataset.read(1, out_shape=(height, width), resampling=resampling)
+                overlay_data = dataset.read(1, out_shape=(height, width), resampling=resampling)
+                return data, transform, crs, overlay_data
     finally:
         for dataset in datasets:
             dataset.close()
+
+
+def _read_worldpop_density(
+    *,
+    bbox_values: tuple[float, float, float, float],
+    output_path: Path,
+) -> tuple[np.ndarray, Affine, Any]:
+    settings = get_settings()
+    west, south, east, north = bbox_values
+    width_degrees = max(east - west, 0.0001)
+    height_degrees = max(north - south, 0.0001)
+    pixel_size = 0.0008333314043231382
+    width = min(MAX_OVERLAY_PIXELS, max(1, round(width_degrees / pixel_size)))
+    height = min(MAX_OVERLAY_PIXELS, max(1, round(height_degrees / pixel_size)))
+    params = {
+        "bbox": ",".join(str(value) for value in bbox_values),
+        "bboxSR": 4326,
+        "imageSR": 4326,
+        "size": f"{width},{height}",
+        "format": "tiff",
+        "pixelType": "F32",
+        "time": settings.worldpop_population_time_ms,
+        "f": "image",
+    }
+    url = f"{settings.worldpop_population_density_url}?{urlencode(params)}"
+    urlretrieve(url, output_path)
+    with rasterio.open(output_path) as dataset:
+        return dataset.read(1), dataset.transform, dataset.crs
 
 
 def _dem_rgba(data: np.ndarray) -> np.ndarray:
@@ -136,6 +177,153 @@ def _land_cover_rgba(data: np.ndarray) -> np.ndarray:
     return rgba
 
 
+def _clean_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    numeric = float(value)
+    return numeric if np.isfinite(numeric) else None
+
+
+def _geometry_area_square_meters(geometry_geojson: dict[str, Any]) -> float:
+    area, _ = GEOD.geometry_area_perimeter(shape(geometry_geojson))
+    return abs(area)
+
+
+def _context_grid_statistics(
+    *,
+    area_geojson: dict[str, Any],
+    dem: np.ndarray,
+    dem_transform: Affine,
+    dem_crs: Any,
+    land_cover: np.ndarray,
+    land_cover_transform: Affine,
+    land_cover_crs: Any,
+    population_density: np.ndarray | None,
+    population_density_transform: Affine | None,
+    population_density_crs: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    grids = ensure_grids_for_area(area_geojson)
+    if not grids:
+        return [], [], []
+
+    dem_geometries = [
+        transform_geom("EPSG:4326", dem_crs, grid["geometry"])
+        if dem_crs
+        else grid["geometry"]
+        for grid in grids
+    ]
+    land_cover_geometries = [
+        transform_geom("EPSG:4326", land_cover_crs, grid["geometry"])
+        if land_cover_crs
+        else grid["geometry"]
+        for grid in grids
+    ]
+    dem_stats = zonal_stats(
+        dem_geometries,
+        dem.astype("float32"),
+        affine=dem_transform,
+        stats=["mean", "min", "max"],
+        geojson_out=False,
+        nodata=np.nan,
+    )
+    land_cover_stats = zonal_stats(
+        land_cover_geometries,
+        land_cover,
+        affine=land_cover_transform,
+        categorical=True,
+        geojson_out=False,
+        nodata=0,
+    )
+    population_stats = [None] * len(grids)
+    if population_density is not None and population_density_transform is not None:
+        population_geometries = [
+            transform_geom("EPSG:4326", population_density_crs, grid["geometry"])
+            if population_density_crs
+            else grid["geometry"]
+            for grid in grids
+        ]
+        population_stats = zonal_stats(
+            population_geometries,
+            population_density.astype("float32"),
+            affine=population_density_transform,
+            stats=["mean"],
+            geojson_out=False,
+            nodata=-3.402823e38,
+        )
+
+    dem_rows: list[dict[str, Any]] = []
+    land_cover_rows: list[dict[str, Any]] = []
+    urban_context_rows: list[dict[str, Any]] = []
+    for grid, dem_stat, land_cover_stat, population_stat in zip(
+        grids,
+        dem_stats,
+        land_cover_stats,
+        population_stats,
+        strict=True,
+    ):
+        dem_rows.append(
+            {
+                "grid_id": grid["grid_id"],
+                "average_elevation": _clean_float(dem_stat.get("mean")),
+                "minimum_elevation": _clean_float(dem_stat.get("min")),
+                "maximum_elevation": _clean_float(dem_stat.get("max")),
+            }
+        )
+
+        class_counts = {
+            int(class_value): int(count)
+            for class_value, count in land_cover_stat.items()
+            if class_value is not None and int(class_value) != 0 and int(count) > 0
+        }
+        total = sum(class_counts.values())
+        dominant_class = max(class_counts, key=class_counts.get) if class_counts else None
+        percentages = {
+            str(class_value): round((count / total) * 100, 2)
+            for class_value, count in sorted(class_counts.items())
+        } if total else {}
+        grid_area_square_meters = _geometry_area_square_meters(grid["geometry"])
+        built_up_count = class_counts.get(BUILT_UP_CLASS, 0)
+        green_cover_count = sum(count for class_value, count in class_counts.items() if class_value in GREEN_COVER_CLASSES)
+        built_up_area_square_meters = (
+            round(grid_area_square_meters * (built_up_count / total), 2)
+            if total
+            else None
+        )
+        green_cover_percentage = (
+            round((green_cover_count / total) * 100, 2)
+            if total
+            else None
+        )
+        population_density_mean = (
+            _clean_float(population_stat.get("mean"))
+            if population_stat
+            else None
+        )
+        population_count = (
+            round(population_density_mean * grid_area_square_meters / 1_000_000, 2)
+            if population_density_mean is not None
+            else None
+        )
+        land_cover_rows.append(
+            {
+                "grid_id": grid["grid_id"],
+                "dominant_class": dominant_class,
+                "class_percentages": percentages,
+            }
+        )
+        urban_context_rows.append(
+            {
+                "grid_id": grid["grid_id"],
+                "population_count": population_count,
+                "built_up_area_square_meters": built_up_area_square_meters,
+                "green_cover_percentage": green_cover_percentage,
+                "road_density_km_per_square_km": None,
+            }
+        )
+
+    return dem_rows, land_cover_rows, urban_context_rows
+
+
 def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     area = shape(area_geojson)
@@ -150,24 +338,36 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     key = hashlib.sha1(",".join(f"{value:.6f}" for value in bbox_values).encode("utf-8")).hexdigest()[:16]
     dem_path = settings.context_temp_dir / f"{key}-dem.png"
     land_cover_path = settings.context_temp_dir / f"{key}-land-cover.png"
+    population_density_path = settings.context_temp_dir / f"{key}-population-density.tif"
 
+    dem, dem_transform, dem_crs, dem_overlay = _read_mosaic(
+        collection="cop-dem-glo-30",
+        asset_key="data",
+        bbox_values=bbox_values,
+        resampling=Resampling.bilinear,
+    )
     if not dem_path.exists():
-        dem = _read_mosaic(
-            collection="cop-dem-glo-30",
-            asset_key="data",
-            bbox_values=bbox_values,
-            resampling=Resampling.bilinear,
-        )
-        _rgba_png(dem_path, _dem_rgba(dem))
+        _rgba_png(dem_path, _dem_rgba(dem_overlay))
 
+    land_cover, land_cover_transform, land_cover_crs, land_cover_overlay = _read_mosaic(
+        collection="esa-worldcover",
+        asset_key="map",
+        bbox_values=bbox_values,
+        resampling=Resampling.nearest,
+    )
     if not land_cover_path.exists():
-        land_cover = _read_mosaic(
-            collection="esa-worldcover",
-            asset_key="map",
+        _rgba_png(land_cover_path, _land_cover_rgba(land_cover_overlay))
+
+    population_density = None
+    population_density_transform = None
+    population_density_crs = None
+    try:
+        population_density, population_density_transform, population_density_crs = _read_worldpop_density(
             bbox_values=bbox_values,
-            resampling=Resampling.nearest,
+            output_path=population_density_path,
         )
-        _rgba_png(land_cover_path, _land_cover_rgba(land_cover))
+    except Exception:
+        population_density = None
 
     relative_dem_url = f"/context/{dem_path.name}"
     relative_land_cover_url = f"/context/{land_cover_path.name}"
@@ -178,9 +378,30 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         dem_url=relative_dem_url,
         land_cover_url=relative_land_cover_url,
     )
+    dem_rows, land_cover_rows, urban_context_rows = _context_grid_statistics(
+        area_geojson=area_geojson,
+        dem=dem,
+        dem_transform=dem_transform,
+        dem_crs=dem_crs,
+        land_cover=land_cover,
+        land_cover_transform=land_cover_transform,
+        land_cover_crs=land_cover_crs,
+        population_density=population_density,
+        population_density_transform=population_density_transform,
+        population_density_crs=population_density_crs,
+    )
+    insert_context_statistics(
+        context_layer_id=context_layer_id,
+        dem_rows=dem_rows,
+        land_cover_rows=land_cover_rows,
+        urban_context_rows=urban_context_rows,
+    )
 
     return {
         "context_layer_id": context_layer_id,
+        "dem_statistics_count": len(dem_rows),
+        "land_cover_statistics_count": len(land_cover_rows),
+        "urban_context_statistics_count": len(urban_context_rows),
         "bounds": [[south, west], [north, east]],
         "dem_url": relative_dem_url,
         "land_cover_url": relative_land_cover_url,
