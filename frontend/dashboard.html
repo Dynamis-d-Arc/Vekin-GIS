@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vekin GIS Data Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="data-dashboard">
+      <header class="dashboard-header">
+        <div>
+          <span>Vekin GIS</span>
+          <h1>Data Dashboard</h1>
+        </div>
+        <div class="dashboard-actions">
+          <button id="refresh-dashboard" type="button">Refresh</button>
+          <a href="./index.html">Map</a>
+        </div>
+      </header>
+
+      <p id="dashboard-status" class="dashboard-status">Loading data from the local API...</p>
+
+      <section class="data-section">
+        <h2>Overview</h2>
+        <div class="metric-grid dashboard-metrics">
+          <div>
+            <span>Total grids</span>
+            <strong id="total-grids">--</strong>
+          </div>
+          <div>
+            <span>NDVI grids</span>
+            <strong id="ndvi-grids">--</strong>
+          </div>
+          <div>
+            <span>Context grids</span>
+            <strong id="context-grids">--</strong>
+          </div>
+          <div>
+            <span>Road density grids</span>
+            <strong id="road-grids">--</strong>
+          </div>
+          <div>
+            <span>Average NDVI</span>
+            <strong id="dashboard-avg-ndvi">--</strong>
+          </div>
+          <div>
+            <span>Total population</span>
+            <strong id="dashboard-population">--</strong>
+          </div>
+          <div>
+            <span>Built-up sq km</span>
+            <strong id="dashboard-built-up">--</strong>
+          </div>
+          <div>
+            <span>Avg road density</span>
+            <strong id="dashboard-road-density">--</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="data-section">
+        <h2>Latest Context Layer</h2>
+        <div id="context-layer" class="metadata-list"></div>
+      </section>
+
+      <section class="data-section">
+        <h2>Grid Data</h2>
+        <div class="table-toolbar">
+          <input id="grid-filter" type="search" placeholder="Filter grid ID" />
+          <span id="grid-count">--</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Grid ID</th>
+                <th>NDVI</th>
+                <th>Min</th>
+                <th>Max</th>
+                <th>Date</th>
+                <th>Population</th>
+                <th>Built-up sq km</th>
+                <th>Green %</th>
+                <th>Road density</th>
+                <th>Elevation avg</th>
+                <th>Elevation min</th>
+                <th>Elevation max</th>
+                <th>Land cover</th>
+                <th>Cover mix</th>
+              </tr>
+            </thead>
+            <tbody id="grid-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="data-section two-column-section">
+        <div>
+          <h2>Recent Metadata</h2>
+          <div class="table-scroll compact-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Satellite</th>
+                  <th>Capture date</th>
+                  <th>Cloud</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="metadata-table"></tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <h2>Historical Trend</h2>
+          <div id="dashboard-trend" class="trend large-trend"></div>
+        </div>
+      </section>
+    </main>
+    <script src="./dashboard.js"></script>
+  </body>
+</html>

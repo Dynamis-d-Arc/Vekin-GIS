@@ -18,6 +18,8 @@ class Settings(BaseSettings):
         "WorldPop_Population_Density_100m/ImageServer/exportImage"
     )
     worldpop_population_time_ms: int = 1577836800000
+    overpass_api_url: str = "https://overpass-api.de/api/interpreter"
+    overpass_timeout_seconds: int = 45
     cors_origins: str = "*"
     sentinel_search_days: int = 30
 

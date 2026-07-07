@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
-from urllib.request import urlretrieve
+from urllib.request import Request, urlopen, urlretrieve
 
 import numpy as np
 import planetary_computer
@@ -16,7 +17,7 @@ from rasterio.merge import merge
 from rasterio.warp import transform_geom
 from rasterstats import zonal_stats
 from pyproj import Geod
-from shapely.geometry import box, mapping, shape
+from shapely.geometry import LineString, MultiLineString, box, mapping, shape
 
 from app.config import get_settings
 from app.repositories import ensure_grids_for_area, insert_context_statistics, upsert_context_layer
@@ -27,6 +28,10 @@ MAX_CONTEXT_AREA_DEGREES = 2.0
 BUILT_UP_CLASS = 50
 GREEN_COVER_CLASSES = {10, 20, 30, 40, 90, 95, 100}
 GEOD = Geod(ellps="WGS84")
+ROAD_HIGHWAY_FILTER = (
+    "motorway|trunk|primary|secondary|tertiary|unclassified|residential|"
+    "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|living_street|service"
+)
 
 
 def _rgba_png(path: Path, rgba: np.ndarray) -> None:
@@ -131,6 +136,43 @@ def _read_worldpop_density(
         return dataset.read(1), dataset.transform, dataset.crs
 
 
+def _read_osm_roads(
+    bbox_values: tuple[float, float, float, float],
+) -> list[LineString]:
+    settings = get_settings()
+    west, south, east, north = bbox_values
+    query = f"""
+    [out:json][timeout:{settings.overpass_timeout_seconds}];
+    (
+      way["highway"~"{ROAD_HIGHWAY_FILTER}"]({south},{west},{north},{east});
+    );
+    out body geom;
+    """
+    data = urlencode({"data": query}).encode("utf-8")
+    request = Request(
+        settings.overpass_api_url,
+        data=data,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "Vekin-GIS/1.0 road-density",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=settings.overpass_timeout_seconds + 10) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    roads: list[LineString] = []
+    for element in payload.get("elements", []):
+        coordinates = [
+            (point["lon"], point["lat"])
+            for point in element.get("geometry", [])
+            if "lon" in point and "lat" in point
+        ]
+        if len(coordinates) >= 2:
+            roads.append(LineString(coordinates))
+    return roads
+
+
 def _dem_rgba(data: np.ndarray) -> np.ndarray:
     valid = np.isfinite(data)
     if not np.any(valid):
@@ -189,6 +231,37 @@ def _geometry_area_square_meters(geometry_geojson: dict[str, Any]) -> float:
     return abs(area)
 
 
+def _road_density_km_per_square_km(
+    *,
+    grid_geometry_geojson: dict[str, Any],
+    road_lines: list[LineString] | None,
+    grid_area_square_meters: float,
+) -> float | None:
+    if road_lines is None or grid_area_square_meters <= 0:
+        return None
+
+    grid_geometry = shape(grid_geometry_geojson)
+    road_length_meters = 0.0
+    for road in road_lines:
+        if not road.intersects(grid_geometry):
+            continue
+        clipped = road.intersection(grid_geometry)
+        if clipped.is_empty:
+            continue
+        if isinstance(clipped, (LineString, MultiLineString)):
+            road_length_meters += abs(GEOD.geometry_length(clipped))
+        else:
+            road_length_meters += sum(
+                abs(GEOD.geometry_length(geometry))
+                for geometry in getattr(clipped, "geoms", [])
+                if isinstance(geometry, (LineString, MultiLineString))
+            )
+
+    if road_length_meters <= 0:
+        return 0.0
+    return round((road_length_meters / 1000) / (grid_area_square_meters / 1_000_000), 3)
+
+
 def _context_grid_statistics(
     *,
     area_geojson: dict[str, Any],
@@ -201,6 +274,7 @@ def _context_grid_statistics(
     population_density: np.ndarray | None,
     population_density_transform: Affine | None,
     population_density_crs: Any,
+    road_lines: list[LineString] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     grids = ensure_grids_for_area(area_geojson)
     if not grids:
@@ -304,6 +378,11 @@ def _context_grid_statistics(
             if population_density_mean is not None
             else None
         )
+        road_density = _road_density_km_per_square_km(
+            grid_geometry_geojson=grid["geometry"],
+            road_lines=road_lines,
+            grid_area_square_meters=grid_area_square_meters,
+        )
         land_cover_rows.append(
             {
                 "grid_id": grid["grid_id"],
@@ -317,7 +396,7 @@ def _context_grid_statistics(
                 "population_count": population_count,
                 "built_up_area_square_meters": built_up_area_square_meters,
                 "green_cover_percentage": green_cover_percentage,
-                "road_density_km_per_square_km": None,
+                "road_density_km_per_square_km": road_density,
             }
         )
 
@@ -369,6 +448,12 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         population_density = None
 
+    road_lines = None
+    try:
+        road_lines = _read_osm_roads(bbox_values)
+    except Exception:
+        road_lines = None
+
     relative_dem_url = f"/context/{dem_path.name}"
     relative_land_cover_url = f"/context/{land_cover_path.name}"
     context_layer_id = upsert_context_layer(
@@ -389,6 +474,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         population_density=population_density,
         population_density_transform=population_density_transform,
         population_density_crs=population_density_crs,
+        road_lines=road_lines,
     )
     insert_context_statistics(
         context_layer_id=context_layer_id,
