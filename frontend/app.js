@@ -121,16 +121,15 @@ const satellite = L.tileLayer(
   },
 );
 
-const overlays = {};
-const layerControl = L.control.layers({ Streets: streets, Satellite: satellite }, overlays).addTo(map);
 const contextLayerGroups = {
-  "DEM / Elevation": L.layerGroup(),
+  "DEM / Elevation": L.layerGroup().addTo(map),
   "Land Cover": L.layerGroup().addTo(map),
 };
-overlays["DEM / Elevation"] = contextLayerGroups["DEM / Elevation"];
-overlays["Land Cover"] = contextLayerGroups["Land Cover"];
-layerControl.addOverlay(contextLayerGroups["DEM / Elevation"], "DEM / Elevation");
-layerControl.addOverlay(contextLayerGroups["Land Cover"], "Land Cover");
+const overlays = {
+  "DEM / Elevation": contextLayerGroups["DEM / Elevation"],
+  "Land Cover": contextLayerGroups["Land Cover"],
+};
+const layerControl = L.control.layers({ Streets: streets, Satellite: satellite }, overlays).addTo(map);
 
 let selectedArea = L.rectangle(bangkokBounds, {
   color: "#1b7f5a",
@@ -143,6 +142,7 @@ let firstCorner = null;
 let previewArea = null;
 let selectedGridLayer = null;
 let changeDetectionLayer = null;
+let gridLayerRequestId = 0;
 const drawButton = document.getElementById("draw-box-button");
 const bboxLabel = document.getElementById("bbox-label");
 
@@ -309,9 +309,9 @@ function ndviColor(value) {
 }
 
 function changeColor(changeClass) {
-  if (changeClass === "possible-construction") return "#b8542f";
-  if (changeClass === "crop-stress-harvest-or-clearing") return "#d99441";
-  if (changeClass === "moderate-vegetation-loss") return "#d8c64b";
+  if (changeClass === "possible-construction") return "#7f1d1d";
+  if (changeClass === "crop-stress-harvest-or-clearing") return "#c2410c";
+  if (changeClass === "moderate-vegetation-loss") return "#e76f51";
   if (changeClass === "crop-growth-or-recovery") return "#1b7f5a";
   if (changeClass === "moderate-vegetation-gain") return "#77a95d";
   if (changeClass === "stable") return "#3b6f8f";
@@ -325,7 +325,7 @@ function changeLayerStyle(feature) {
     color: "#1a2521",
     weight: highlight ? 2 : 1,
     fillColor: changeColor(feature.properties.change_class),
-    fillOpacity: feature.properties.change_class === "insufficient-data" ? 0.16 : 0.62,
+    fillOpacity: feature.properties.change_class === "insufficient-data" ? 0.18 : 0.82,
   };
 }
 
@@ -530,8 +530,10 @@ function toGridCaptureParam(value) {
 }
 
 async function loadGridLayer(captureDate = null) {
+  const requestId = ++gridLayerRequestId;
   const path = captureDate ? `/api/grids?capture_date=${encodeURIComponent(toGridCaptureParam(captureDate))}` : "/api/grids";
   const grid = await fetchJson(path);
+  if (requestId !== gridLayerRequestId) return;
   if (overlays.Grids) {
     map.removeLayer(overlays.Grids);
     layerControl.removeLayer(overlays.Grids);

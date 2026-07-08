@@ -749,7 +749,16 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
     date_filter = sql.SQL("")
     params: dict[str, Any] = {}
     if capture_date:
-        date_filter = sql.SQL("AND ns.capture_date::date = %(capture_date)s")
+        date_filter = sql.SQL(
+            """
+              AND ns.capture_date::date = (
+                SELECT candidate.capture_date::date
+                FROM ndvi_statistics candidate
+                ORDER BY abs(candidate.capture_date::date - %(capture_date)s), candidate.capture_date DESC
+                LIMIT 1
+              )
+            """
+        )
         params["capture_date"] = capture_date.date()
 
     with get_connection() as conn:
