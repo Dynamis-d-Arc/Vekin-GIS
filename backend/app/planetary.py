@@ -15,8 +15,10 @@ def _sentinel_item_payload(item: Any, area_geojson: dict[str, Any]) -> dict[str,
     bbox_geojson = mapping(box(*signed.bbox).intersection(area.envelope))
     red_asset = signed.assets.get("B04")
     nir_asset = signed.assets.get("B08")
-    if not red_asset or not nir_asset:
-        raise LookupError("Matched Sentinel-2 item does not expose B04 and B08 assets.")
+    ndbi_nir_asset = signed.assets.get("B8A")
+    swir_asset = signed.assets.get("B11")
+    if not red_asset or not nir_asset or not ndbi_nir_asset or not swir_asset:
+        raise LookupError("Matched Sentinel-2 item does not expose B04, B08, B8A, and B11 assets.")
 
     return {
         "id": signed.id,
@@ -27,6 +29,8 @@ def _sentinel_item_payload(item: Any, area_geojson: dict[str, Any]) -> dict[str,
         "bbox_geojson": bbox_geojson,
         "red_url": red_asset.href,
         "nir_url": nir_asset.href,
+        "ndbi_nir_url": ndbi_nir_asset.href,
+        "swir_url": swir_asset.href,
         "temporary_image_url": signed.get_self_href(),
     }
 

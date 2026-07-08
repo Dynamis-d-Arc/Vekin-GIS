@@ -41,6 +41,7 @@ class ProcessResponse(BaseModel):
     status: str
     grids_processed: int
     ndvi_temp_path: str | None
+    ndbi_temp_path: str | None = None
 
 
 class ProcessRangeResponse(BaseModel):

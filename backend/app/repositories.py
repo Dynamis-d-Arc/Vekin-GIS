@@ -87,6 +87,19 @@ def update_satellite_status(image_id: str, status: str) -> None:
         conn.commit()
 
 
+def ensure_ndvi_statistics_columns() -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            ALTER TABLE ndvi_statistics
+              ADD COLUMN IF NOT EXISTS average_ndbi double precision,
+              ADD COLUMN IF NOT EXISTS minimum_ndbi double precision,
+              ADD COLUMN IF NOT EXISTS maximum_ndbi double precision
+            """
+        )
+        conn.commit()
+
+
 def delete_processed_data() -> dict[str, int]:
     with get_connection() as conn:
         stats_schema = get_context_statistics_schema(conn)
@@ -670,6 +683,9 @@ def insert_ndvi_statistics(rows: list[dict[str, Any]], satellite_image_id: str) 
                   average_ndvi,
                   minimum_ndvi,
                   maximum_ndvi,
+                  average_ndbi,
+                  minimum_ndbi,
+                  maximum_ndbi,
                   geometry,
                   satellite_image_id
                 )
@@ -679,6 +695,9 @@ def insert_ndvi_statistics(rows: list[dict[str, Any]], satellite_image_id: str) 
                   %(average_ndvi)s,
                   %(minimum_ndvi)s,
                   %(maximum_ndvi)s,
+                  %(average_ndbi)s,
+                  %(minimum_ndbi)s,
+                  %(maximum_ndbi)s,
                   ST_SetSRID(ST_GeomFromGeoJSON(%(geometry)s), 4326),
                   %(satellite_image_id)s
                 )
@@ -687,6 +706,9 @@ def insert_ndvi_statistics(rows: list[dict[str, Any]], satellite_image_id: str) 
                   average_ndvi = EXCLUDED.average_ndvi,
                   minimum_ndvi = EXCLUDED.minimum_ndvi,
                   maximum_ndvi = EXCLUDED.maximum_ndvi,
+                  average_ndbi = EXCLUDED.average_ndbi,
+                  minimum_ndbi = EXCLUDED.minimum_ndbi,
+                  maximum_ndbi = EXCLUDED.maximum_ndbi,
                   geometry = EXCLUDED.geometry
                 """,
                 [
@@ -742,6 +764,9 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
               ns.average_ndvi,
               ns.minimum_ndvi,
               ns.maximum_ndvi,
+              ns.average_ndbi,
+              ns.minimum_ndbi,
+              ns.maximum_ndbi,
               ns.capture_date,
               ds.average_elevation,
               ds.minimum_elevation,
@@ -808,6 +833,9 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
                     "average_ndvi": row["average_ndvi"],
                     "minimum_ndvi": row["minimum_ndvi"],
                     "maximum_ndvi": row["maximum_ndvi"],
+                    "average_ndbi": row["average_ndbi"],
+                    "minimum_ndbi": row["minimum_ndbi"],
+                    "maximum_ndbi": row["maximum_ndbi"],
                     "capture_date": row["capture_date"].isoformat() if row["capture_date"] else None,
                     "average_elevation": row["average_elevation"],
                     "minimum_elevation": row["minimum_elevation"],
@@ -823,6 +851,33 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
             for row in rows
         ],
     }
+
+
+def get_ndvi_capture_dates_for_area(
+    *,
+    area_geojson: dict[str, Any],
+    start_date: datetime,
+    end_date: datetime,
+) -> list[datetime]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT ns.capture_date
+            FROM ndvi_statistics ns
+            WHERE ns.capture_date::date BETWEEN %(start_date)s AND %(end_date)s
+            AND ST_Intersects(
+              ns.geometry,
+              ST_SetSRID(ST_GeomFromGeoJSON(%(area)s), 4326)
+            )
+            ORDER BY ns.capture_date
+            """,
+            {
+                "area": Json(area_geojson),
+                "start_date": start_date.date(),
+                "end_date": end_date.date(),
+            },
+        ).fetchall()
+    return [row["capture_date"] for row in rows]
 
 
 def get_latest_context_statistics() -> dict[str, Any]:

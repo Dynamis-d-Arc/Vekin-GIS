@@ -466,6 +466,7 @@ function renderGridTable() {
     tr.innerHTML = `
       <td>${row.grid_id}</td>
       <td>${formatNumber(row.average_ndvi)}</td>
+      <td>${formatNumber(row.average_ndbi)}</td>
       <td>${formatNumber(row.minimum_ndvi)}</td>
       <td>${formatNumber(row.maximum_ndvi)}</td>
       <td>${row.capture_date ? new Date(row.capture_date).toLocaleDateString() : "--"}</td>

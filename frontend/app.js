@@ -142,6 +142,7 @@ let drawMode = false;
 let firstCorner = null;
 let previewArea = null;
 let selectedGridLayer = null;
+let changeDetectionLayer = null;
 const drawButton = document.getElementById("draw-box-button");
 const bboxLabel = document.getElementById("bbox-label");
 
@@ -307,6 +308,63 @@ function ndviColor(value) {
   return "#1b7f5a";
 }
 
+function changeColor(changeClass) {
+  if (changeClass === "possible-construction") return "#b8542f";
+  if (changeClass === "crop-stress-harvest-or-clearing") return "#d99441";
+  if (changeClass === "moderate-vegetation-loss") return "#d8c64b";
+  if (changeClass === "crop-growth-or-recovery") return "#1b7f5a";
+  if (changeClass === "moderate-vegetation-gain") return "#77a95d";
+  if (changeClass === "stable") return "#3b6f8f";
+  return "#8c9690";
+}
+
+function changeLayerStyle(feature) {
+  const highlight = ["possible-construction", "crop-stress-harvest-or-clearing", "crop-growth-or-recovery"]
+    .includes(feature.properties.change_class);
+  return {
+    color: "#1a2521",
+    weight: highlight ? 2 : 1,
+    fillColor: changeColor(feature.properties.change_class),
+    fillOpacity: feature.properties.change_class === "insufficient-data" ? 0.16 : 0.62,
+  };
+}
+
+function formatSignedNumber(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "--";
+  const number = Number(value);
+  return `${number >= 0 ? "+" : ""}${number.toFixed(3)}`;
+}
+
+function changeClassLabel(changeClass) {
+  const labels = {
+    "possible-construction": "Possible construction / built-up conversion",
+    "crop-stress-harvest-or-clearing": "Crop stress, harvest, or clearing",
+    "moderate-vegetation-loss": "Moderate vegetation loss",
+    "crop-growth-or-recovery": "Crop growth or recovery",
+    "moderate-vegetation-gain": "Moderate vegetation gain",
+    stable: "Stable",
+    "insufficient-data": "Insufficient data",
+  };
+  return labels[changeClass] || "Unknown";
+}
+
+function formatChangeSummary(summary = {}) {
+  const ordered = [
+    ["crop-stress-harvest-or-clearing", "crop stress/harvest"],
+    ["crop-growth-or-recovery", "crop growth/recovery"],
+    ["moderate-vegetation-loss", "moderate loss"],
+    ["moderate-vegetation-gain", "moderate gain"],
+    ["possible-construction", "possible construction"],
+    ["stable", "stable"],
+    ["insufficient-data", "insufficient data"],
+  ];
+  const parts = ordered
+    .map(([key, label]) => [Number(summary[key] || 0), label])
+    .filter(([count]) => count > 0)
+    .map(([count, label]) => `${count.toLocaleString()} ${label}`);
+  return parts.length ? parts.join(", ") : "no comparable grid cells";
+}
+
 function defaultGridStyle(feature) {
   return {
     color: "#315c4b",
@@ -372,6 +430,17 @@ function popupContent(p) {
     Green cover: ${formatNumber(p.green_cover_percentage)}%<br>
     Road density: ${formatNumber(p.road_density_km_per_square_km)} km/sq km<br>
     Date: ${p.capture_date || "No data"}
+  `;
+}
+
+function changePopupContent(p) {
+  return `
+    <strong>${p.grid_id}</strong><br>
+    Change: ${changeClassLabel(p.change_class)}<br>
+    NDVI: ${formatNumber(p.start_ndvi)} -> ${formatNumber(p.end_ndvi)} (${formatSignedNumber(p.delta_ndvi)})<br>
+    NDBI: ${formatNumber(p.start_ndbi)} -> ${formatNumber(p.end_ndbi)} (${formatSignedNumber(p.delta_ndbi)})<br>
+    Requested: ${p.start_date || "--"} to ${p.end_date || "--"}<br>
+    Compared: ${p.start_capture_date ? new Date(p.start_capture_date).toLocaleDateString() : "--"} to ${p.end_capture_date ? new Date(p.end_capture_date).toLocaleDateString() : "--"}
   `;
 }
 
@@ -484,6 +553,21 @@ async function loadGridLayer(captureDate = null) {
   }).addTo(map);
   selectedGridLayer = null;
   layerControl.addOverlay(overlays.Grids, "Grid / NDVI");
+}
+
+function renderChangeDetectionLayer(change) {
+  if (changeDetectionLayer) {
+    map.removeLayer(changeDetectionLayer);
+    layerControl.removeLayer(changeDetectionLayer);
+  }
+  changeDetectionLayer = L.geoJSON(change, {
+    pane: "ndviPane",
+    style: changeLayerStyle,
+    onEachFeature: (feature, layer) => {
+      layer.bindPopup(changePopupContent(feature.properties));
+    },
+  }).addTo(map);
+  layerControl.addOverlay(changeDetectionLayer, "Change Detection");
 }
 
 function formatNumber(value) {
@@ -618,6 +702,34 @@ document.getElementById("process-form").addEventListener("submit", async (event)
     map.fitBounds(selectedArea.getBounds(), { padding: [24, 24] });
   } catch (error) {
     setStatus(`Processing failed: ${error.message}`);
+  }
+});
+
+document.getElementById("change-detection-button").addEventListener("click", async () => {
+  const startDate = document.getElementById("date").value;
+  const endDate = document.getElementById("end-date").value;
+  if (!startDate || !endDate) return;
+  if (startDate >= endDate) {
+    setStatus("Change detection needs a before date earlier than the after date.");
+    return;
+  }
+
+  resetDrawMode();
+  setStatus("Loading NDVI/NDBI change detection layer...");
+  try {
+    const change = await fetchJson("/api/change-detection", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        area: boundsToPolygon(selectedArea.getBounds()),
+        start_date: startDate,
+        end_date: endDate,
+      }),
+    });
+    renderChangeDetectionLayer(change);
+    setStatus(`Change layer loaded: ${formatChangeSummary(change.summary)}.`);
+  } catch (error) {
+    setStatus(`Change detection failed: ${error.message}`);
   }
 });
 

@@ -38,9 +38,11 @@ def generate_ndvi(
     *,
     red_url: str,
     nir_url: str,
+    ndbi_nir_url: str | None = None,
+    swir_url: str | None = None,
     area_geojson: dict[str, Any],
     item_id: str,
-) -> Path:
+) -> tuple[Path, Path | None]:
     settings = get_settings()
     settings.ndvi_temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -61,12 +63,31 @@ def generate_ndvi(
     with rasterio.open(output_path, "w", **profile) as dst:
         dst.write(ndvi, 1)
 
-    return output_path
+    ndbi_path = None
+    if ndbi_nir_url and swir_url:
+        ndbi_nir, ndbi_profile = _read_band_for_area(ndbi_nir_url, area_geojson)
+        swir, _ = _read_band_for_area(swir_url, area_geojson)
+        ndbi_denominator = swir + ndbi_nir
+        ndbi_valid = np.isfinite(swir) & np.isfinite(ndbi_nir) & (swir > 0) & (ndbi_nir > 0)
+        ndbi = np.divide(
+            swir - ndbi_nir,
+            ndbi_denominator,
+            out=np.full_like(swir, np.nan, dtype="float32"),
+            where=ndbi_valid & (ndbi_denominator != 0),
+        )
+        ndbi = np.clip(ndbi, -1, 1).astype("float32")
+
+        ndbi_path = settings.ndvi_temp_dir / f"{item_id}-ndbi.tif"
+        with rasterio.open(ndbi_path, "w", **ndbi_profile) as dst:
+            dst.write(ndbi, 1)
+
+    return output_path, ndbi_path
 
 
 def calculate_grid_statistics(
     *,
     ndvi_path: Path,
+    ndbi_path: Path | None = None,
     area_geojson: dict[str, Any],
     capture_date: datetime,
 ) -> list[dict[str, Any]]:
@@ -89,9 +110,19 @@ def calculate_grid_statistics(
         geojson_out=False,
         nodata=np.nan,
     )
+    ndbi_stats = None
+    if ndbi_path:
+        ndbi_stats = zonal_stats(
+            geometries,
+            ndbi_path,
+            stats=["mean", "min", "max"],
+            geojson_out=False,
+            nodata=np.nan,
+        )
 
     rows: list[dict[str, Any]] = []
-    for grid, stat in zip(grids, stats, strict=True):
+    for index, (grid, stat) in enumerate(zip(grids, stats, strict=True)):
+        ndbi_stat = ndbi_stats[index] if ndbi_stats else {}
         rows.append(
             {
                 "grid_id": grid["grid_id"],
@@ -99,6 +130,9 @@ def calculate_grid_statistics(
                 "average_ndvi": stat.get("mean"),
                 "minimum_ndvi": stat.get("min"),
                 "maximum_ndvi": stat.get("max"),
+                "average_ndbi": ndbi_stat.get("mean"),
+                "minimum_ndbi": ndbi_stat.get("min"),
+                "maximum_ndbi": ndbi_stat.get("max"),
                 "geometry": grid["geometry"],
             }
         )
