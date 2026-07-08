@@ -583,35 +583,38 @@ document.getElementById("process-form").addEventListener("submit", async (event)
 
   resetDrawMode();
   const isRange = startDate !== endDate;
-  setStatus(isRange ? "Querying Sentinel-2 scenes across the date range..." : "Querying Sentinel-2 and processing B04/B08 NDVI...");
+  setStatus(isRange ? "Querying Sentinel-2 scenes across the date range..." : "Querying Sentinel-2 scenes for the selected date...");
   try {
     const payload = {
       area: boundsToPolygon(selectedArea.getBounds()),
       max_cloud_cover: maxCloud,
     };
-    const path = isRange ? "/api/ndvi/process-range" : "/api/ndvi/process";
-    const body = isRange
-      ? { ...payload, start_date: startDate, end_date: endDate }
-      : { ...payload, date: startDate };
-    const result = await fetchJson(path, {
+    const result = await fetchJson("/api/ndvi/process-range", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...payload, start_date: startDate, end_date: endDate }),
     });
+    setStatus("Processing CHIRPS Daily rainfall for the selected area...");
+    const rainfall = await fetchJson("/api/rainfall/process-range", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, start_date: startDate, end_date: endDate }),
+    }).catch((error) => ({ error }));
     setStatus("Loading DEM and land-cover context for the selected area...");
     const contextSucceeded = await loadContextLayers(payload.area)
       .then(() => true)
       .catch(() => false);
-    const displayCaptureDate = isRange
-      ? result.results.at(-1)?.capture_date
-      : result.capture_date;
+    const displayCaptureDate = result.results.at(-1)?.capture_date;
     await Promise.all([loadGridLayer(displayCaptureDate), loadDashboard(), loadMetadata(), loadUrbanContext()]);
     const contextFailed = !contextSucceeded;
     const suffix = contextFailed ? " DEM/land-cover context was not available for this area." : "";
     const completion = isRange
       ? `Complete. Processed ${result.images_processed} scenes and ${result.grids_processed} grid/date rows.`
-      : `Complete. Processed ${result.grids_processed} grid cells for ${new Date(result.capture_date).toLocaleDateString()}.`;
-    setStatus(`${completion}${suffix}`);
+      : `Complete. Processed ${result.grids_processed} grid cells for ${new Date(displayCaptureDate).toLocaleDateString()}.`;
+    const rainfallStatus = rainfall.error
+      ? ` CHIRPS rainfall skipped: ${rainfall.error.message}`
+      : ` CHIRPS rainfall days: ${rainfall.days_processed}.`;
+    setStatus(`${completion}${rainfallStatus}${suffix}`);
     map.fitBounds(selectedArea.getBounds(), { padding: [24, 24] });
   } catch (error) {
     setStatus(`Processing failed: ${error.message}`);

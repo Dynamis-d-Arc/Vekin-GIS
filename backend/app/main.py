@@ -9,17 +9,22 @@ from app.config import get_settings
 from app.context_layers import create_context_layers
 from app.db import close_pool, open_pool
 from app.ndvi import calculate_grid_statistics, generate_ndvi
+from app.rainfall import CHIRPS_SOURCE, calculate_rainfall_range
 from app.planetary import find_sentinel_item, find_sentinel_items_for_range
 from app.repositories import (
+    delete_processed_data,
     ensure_context_statistics_tables,
+    ensure_rainfall_tables,
     get_context_layers,
     get_dashboard,
     get_grid_layer,
     get_latest_context_statistics,
     get_metadata,
     insert_ndvi_statistics,
+    insert_rainfall_statistics,
     insert_satellite_image,
     update_satellite_status,
+    upsert_rainfall_area,
 )
 from app.schemas import (
     AreaDateRangeRequest,
@@ -28,6 +33,7 @@ from app.schemas import (
     ContextLayersRequest,
     ProcessRangeResponse,
     ProcessResponse,
+    RainfallProcessResponse,
 )
 
 
@@ -49,6 +55,7 @@ app.add_middleware(
 def startup() -> None:
     open_pool()
     ensure_context_statistics_tables()
+    ensure_rainfall_tables()
 
 
 @app.on_event("shutdown")
@@ -161,6 +168,44 @@ def process_ndvi_range(request: AreaDateRangeRequest) -> ProcessRangeResponse:
     )
 
 
+@app.post("/api/rainfall/process-range", response_model=RainfallProcessResponse)
+def process_rainfall_range(request: AreaDateRangeRequest) -> RainfallProcessResponse:
+    try:
+        area_id = upsert_rainfall_area(request.area)
+        rows = calculate_rainfall_range(
+            area_geojson=request.area,
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+        count = insert_rainfall_statistics(
+            area_id=area_id,
+            rows=rows,
+            source=CHIRPS_SOURCE,
+        )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Rainfall processing failed: {exc}") from exc
+
+    rainfall_values = [
+        row["average_rainfall_mm"]
+        for row in rows
+        if row["average_rainfall_mm"] is not None
+    ]
+    cumulative = sum(rainfall_values) if rainfall_values else None
+    average = cumulative / len(rainfall_values) if rainfall_values else None
+    return RainfallProcessResponse(
+        area_id=area_id,
+        status="complete",
+        source=CHIRPS_SOURCE,
+        days_processed=count,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        average_rainfall_mm=average,
+        cumulative_rainfall_mm=cumulative,
+    )
+
+
 @app.get("/api/metadata")
 def metadata(limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
     return get_metadata(limit)
@@ -174,6 +219,16 @@ def grids(capture_date: datetime | None = None) -> dict[str, Any]:
 @app.get("/api/dashboard")
 def dashboard() -> dict[str, Any]:
     return get_dashboard()
+
+
+@app.delete("/api/dashboard/data")
+def clear_dashboard_data() -> dict[str, Any]:
+    deleted = delete_processed_data()
+    return {
+        "status": "complete",
+        "deleted": deleted,
+        "total_deleted": sum(deleted.values()),
+    }
 
 
 @app.post("/api/context/layers")

@@ -34,6 +34,12 @@ function formatSquareKilometers(value) {
     : (Number(value) / 1_000_000).toFixed(2);
 }
 
+function formatMillimeters(value) {
+  return value === null || value === undefined || !Number.isFinite(Number(value))
+    ? "--"
+    : `${Number(value).toFixed(1)} mm`;
+}
+
 function averageFinite(values) {
   const finite = values.map(Number).filter(Number.isFinite);
   if (!finite.length) return null;
@@ -61,8 +67,8 @@ function finiteOrZero(value) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
-async function fetchJson(path) {
-  const response = await fetch(`${API_BASE}${path}`);
+async function fetchJson(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, options);
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message);
@@ -164,6 +170,48 @@ function renderTrendChart(rows) {
         y: {
           beginAtZero: true,
           ticks: { color: palette.muted },
+          grid: { color: "rgba(217, 225, 220, 0.7)" },
+        },
+      },
+    }),
+  });
+}
+
+function renderRainfallTrendChart(rows) {
+  const points = rows
+    .map((row) => ({
+      label: row.date,
+      value: Number(row.average_rainfall_mm),
+    }))
+    .filter((row) => Number.isFinite(row.value));
+
+  renderChart("rainfall-trend-chart", {
+    type: "bar",
+    data: {
+      labels: points.map((point) => point.label),
+      datasets: [
+        {
+          label: "Average rainfall",
+          data: points.map((point) => point.value),
+          backgroundColor: "rgba(59, 111, 143, 0.72)",
+          borderColor: palette.blue,
+          borderWidth: 1,
+          borderRadius: 5,
+        },
+      ],
+    },
+    options: chartBaseOptions({
+      scales: {
+        x: {
+          ticks: { color: palette.muted, maxRotation: 0 },
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            color: palette.muted,
+            callback: (value) => `${value} mm`,
+          },
           grid: { color: "rgba(217, 225, 220, 0.7)" },
         },
       },
@@ -339,6 +387,7 @@ function renderCharts({ dashboard, metadata, context }) {
     return;
   }
   renderTrendChart(dashboard.trend || []);
+  renderRainfallTrendChart(dashboard.rainfall_trend || []);
   renderNdviDistributionChart();
   renderLandCoverChart();
   renderContextChart(context);
@@ -388,12 +437,17 @@ function renderOverview({ dashboard, grids, context }) {
   const populationTotal = sumFinite(contextRows.map((row) => row.population_count));
   const builtUpTotal = sumFinite(contextRows.map((row) => row.built_up_area_square_meters));
   const roadDensityAverage = averageFinite(contextRows.map((row) => row.road_density_km_per_square_km));
+  const rainfallRows = dashboard.rainfall_trend || [];
+  const rainfallAverage = averageFinite(rainfallRows.map((row) => row.average_rainfall_mm));
+  const rainfallTotal = sumFinite(rainfallRows.map((row) => row.average_rainfall_mm));
 
   document.getElementById("total-grids").textContent = formatCompactNumber(properties.length);
   document.getElementById("ndvi-grids").textContent = formatCompactNumber(ndviCount);
   document.getElementById("context-grids").textContent = formatCompactNumber(contextCount);
   document.getElementById("road-grids").textContent = formatCompactNumber(roadCount);
   document.getElementById("dashboard-avg-ndvi").textContent = formatNumber(dashboard.summary.average_ndvi);
+  document.getElementById("dashboard-avg-rainfall").textContent = formatMillimeters(rainfallAverage);
+  document.getElementById("dashboard-rainfall-total").textContent = rainfallRows.length ? formatMillimeters(rainfallTotal) : "--";
   document.getElementById("dashboard-population").textContent = populationTotal > 0 ? formatCompactNumber(populationTotal) : "--";
   document.getElementById("dashboard-built-up").textContent = builtUpTotal > 0 ? formatSquareKilometers(builtUpTotal) : "--";
   document.getElementById("dashboard-road-density").textContent = roadDensityAverage === null ? "--" : formatNumber(roadDensityAverage);
@@ -457,8 +511,11 @@ function renderInsights({ dashboard, context }) {
   const previous = Number(trend.at(-2)?.average_ndvi);
   const current = Number(trend.at(-1)?.average_ndvi);
   const change = Number.isFinite(previous) && Number.isFinite(current) ? current - previous : null;
+  const rainfallRows = dashboard.rainfall_trend || [];
+  const latestRainfall = Number(rainfallRows.at(-1)?.average_rainfall_mm);
   const items = [
     ["NDVI change", change === null ? "--" : `${change >= 0 ? "+" : ""}${formatNumber(change)}`],
+    ["Latest rainfall", Number.isFinite(latestRainfall) ? formatMillimeters(latestRainfall) : "--"],
     ["Average green cover", greenAverage === null ? "--" : `${formatNumber(greenAverage)}%`],
     ["Average road density", roadDensityAverage === null ? "--" : `${formatNumber(roadDensityAverage)} km/sq km`],
     ["Context population", populationTotal > 0 ? formatCompactNumber(populationTotal) : "--"],
@@ -492,10 +549,34 @@ async function loadDataDashboard() {
   setStatus(`Loaded ${gridRows.length.toLocaleString()} grid rows.`);
 }
 
+async function deleteDashboardData() {
+  const confirmed = window.confirm(
+    "Delete all processed dashboard data? This clears NDVI, rainfall, satellite metadata, and context layer results. Base grid cells stay available.",
+  );
+  if (!confirmed) return;
+
+  const button = document.getElementById("delete-dashboard-data");
+  button.disabled = true;
+  setStatus("Deleting processed dashboard data...");
+  try {
+    const result = await fetchJson("/api/dashboard/data", { method: "DELETE" });
+    await loadDataDashboard();
+    setStatus(`Deleted ${formatCompactNumber(result.total_deleted)} processed records. Base grid cells were kept.`);
+  } catch (error) {
+    setStatus(`Delete failed: ${error.message}`);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 document.getElementById("refresh-dashboard").addEventListener("click", () => {
   loadDataDashboard().catch((error) => {
     setStatus(`Dashboard load failed: ${error.message}`);
   });
+});
+
+document.getElementById("delete-dashboard-data").addEventListener("click", () => {
+  deleteDashboardData();
 });
 
 document.getElementById("grid-filter").addEventListener("input", renderGridTable);

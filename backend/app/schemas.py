@@ -48,3 +48,14 @@ class ProcessRangeResponse(BaseModel):
     images_processed: int
     grids_processed: int
     results: list[ProcessResponse]
+
+
+class RainfallProcessResponse(BaseModel):
+    area_id: str
+    status: str
+    source: str
+    days_processed: int
+    start_date: date
+    end_date: date
+    average_rainfall_mm: float | None
+    cumulative_rainfall_mm: float | None

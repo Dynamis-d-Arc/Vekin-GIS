@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     sentinel_collection: str = "sentinel-2-l2a"
     api_public_base_url: str = "http://localhost:8000"
     ndvi_temp_dir: Path = Path("tmp/ndvi")
+    rainfall_temp_dir: Path = Path("tmp/rainfall")
+    chirps_daily_base_url: str = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05"
+    chirps_prelim_daily_base_url: str = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/prelim/global_daily/tifs/p05"
     context_temp_dir: Path = Path("tmp/context")
     context_statistics_schema: str | None = None
     context_statistics_schema_reference_table: str = "BKK_TMD_WEATHER_DATA"

@@ -16,6 +16,7 @@
         </div>
         <div class="dashboard-actions">
           <button id="refresh-dashboard" type="button">Refresh</button>
+          <button id="delete-dashboard-data" class="danger-button" type="button">Delete All Data</button>
           <a href="./index.html">Map</a>
         </div>
       </header>
@@ -51,6 +52,16 @@
             <small>latest aggregate</small>
           </div>
           <div class="kpi-card">
+            <span>Avg rainfall</span>
+            <strong id="dashboard-avg-rainfall">--</strong>
+            <small>CHIRPS daily</small>
+          </div>
+          <div class="kpi-card">
+            <span>Cumulative rain</span>
+            <strong id="dashboard-rainfall-total">--</strong>
+            <small>loaded date range</small>
+          </div>
+          <div class="kpi-card">
             <span>Total population</span>
             <strong id="dashboard-population">--</strong>
             <small>latest context</small>
@@ -76,6 +87,15 @@
           </div>
           <div class="chart-frame tall-chart">
             <canvas id="ndvi-trend-chart"></canvas>
+          </div>
+        </article>
+        <article class="chart-panel">
+          <div>
+            <h2>Rainfall Trend</h2>
+            <span>CHIRPS Daily average rainfall</span>
+          </div>
+          <div class="chart-frame">
+            <canvas id="rainfall-trend-chart"></canvas>
           </div>
         </article>
         <article class="chart-panel">

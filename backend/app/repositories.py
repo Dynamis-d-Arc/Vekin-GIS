@@ -87,6 +87,34 @@ def update_satellite_status(image_id: str, status: str) -> None:
         conn.commit()
 
 
+def delete_processed_data() -> dict[str, int]:
+    with get_connection() as conn:
+        stats_schema = get_context_statistics_schema(conn)
+        counts = {
+            "ndvi_statistics": conn.execute("SELECT count(*) FROM ndvi_statistics").fetchone()["count"],
+            "satellite_images": conn.execute("SELECT count(*) FROM satellite_images").fetchone()["count"],
+            "rainfall_statistics": conn.execute("SELECT count(*) FROM rainfall_statistics").fetchone()["count"],
+            "rainfall_areas": conn.execute("SELECT count(*) FROM rainfall_areas").fetchone()["count"],
+            "context_layers": conn.execute("SELECT count(*) FROM context_layers").fetchone()["count"],
+            "dem_statistics": conn.execute(
+                sql.SQL("SELECT count(*) FROM {}").format(_stats_table(stats_schema, "dem_statistics"))
+            ).fetchone()["count"],
+            "land_cover_statistics": conn.execute(
+                sql.SQL("SELECT count(*) FROM {}").format(_stats_table(stats_schema, "land_cover_statistics"))
+            ).fetchone()["count"],
+            "urban_context_statistics": conn.execute(
+                sql.SQL("SELECT count(*) FROM {}").format(_stats_table(stats_schema, "urban_context_statistics"))
+            ).fetchone()["count"],
+        }
+
+        conn.execute("DELETE FROM ndvi_statistics")
+        conn.execute("DELETE FROM satellite_images")
+        conn.execute("DELETE FROM rainfall_areas")
+        conn.execute("DELETE FROM context_layers")
+        conn.commit()
+        return counts
+
+
 def ensure_context_statistics_tables() -> None:
     with get_connection() as conn:
         stats_schema = get_context_statistics_schema(conn)
@@ -176,6 +204,167 @@ def ensure_context_statistics_tables() -> None:
             )
         )
         conn.commit()
+
+
+def ensure_rainfall_tables() -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rainfall_areas (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              area_hash text NOT NULL UNIQUE,
+              geometry geometry(Polygon, 4326) NOT NULL,
+              bbox geometry(Polygon, 4326) NOT NULL,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              updated_at timestamptz NOT NULL DEFAULT now()
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rainfall_areas_geometry
+              ON rainfall_areas
+              USING gist (geometry)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rainfall_statistics (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              area_id uuid NOT NULL REFERENCES rainfall_areas(id) ON DELETE CASCADE,
+              capture_date date NOT NULL,
+              source text NOT NULL DEFAULT 'chirps-daily',
+              average_rainfall_mm double precision,
+              minimum_rainfall_mm double precision,
+              maximum_rainfall_mm double precision,
+              median_rainfall_mm double precision,
+              rainfall_stddev_mm double precision,
+              valid_pixel_count integer NOT NULL DEFAULT 0,
+              source_url text,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (area_id, capture_date, source)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rainfall_statistics_area_date
+              ON rainfall_statistics (area_id, capture_date)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rainfall_statistics_capture_date
+              ON rainfall_statistics (capture_date)
+            """
+        )
+        conn.commit()
+
+
+def upsert_rainfall_area(area_geojson: dict[str, Any]) -> str:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            WITH input AS (
+              SELECT ST_SetSRID(ST_GeomFromGeoJSON(%(area)s), 4326) AS geometry
+            ),
+            normalized AS (
+              SELECT
+                md5(ST_AsText(ST_SnapToGrid(geometry, 0.000001))) AS area_hash,
+                geometry,
+                ST_Envelope(geometry)::geometry(Polygon, 4326) AS bbox
+              FROM input
+            )
+            INSERT INTO rainfall_areas (area_hash, geometry, bbox)
+            SELECT area_hash, geometry, bbox
+            FROM normalized
+            ON CONFLICT (area_hash) DO UPDATE SET
+              geometry = EXCLUDED.geometry,
+              bbox = EXCLUDED.bbox,
+              updated_at = now()
+            RETURNING id::text
+            """,
+            {"area": Json(area_geojson)},
+        ).fetchone()
+        conn.commit()
+        return row["id"]
+
+
+def insert_rainfall_statistics(
+    *,
+    area_id: str,
+    rows: list[dict[str, Any]],
+    source: str = "chirps-daily",
+) -> int:
+    if not rows:
+        return 0
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO rainfall_statistics (
+                  area_id,
+                  capture_date,
+                  source,
+                  average_rainfall_mm,
+                  minimum_rainfall_mm,
+                  maximum_rainfall_mm,
+                  median_rainfall_mm,
+                  rainfall_stddev_mm,
+                  valid_pixel_count,
+                  source_url
+                )
+                VALUES (
+                  %(area_id)s,
+                  %(capture_date)s,
+                  %(source)s,
+                  %(average_rainfall_mm)s,
+                  %(minimum_rainfall_mm)s,
+                  %(maximum_rainfall_mm)s,
+                  %(median_rainfall_mm)s,
+                  %(rainfall_stddev_mm)s,
+                  %(valid_pixel_count)s,
+                  %(source_url)s
+                )
+                ON CONFLICT (area_id, capture_date, source)
+                DO UPDATE SET
+                  average_rainfall_mm = EXCLUDED.average_rainfall_mm,
+                  minimum_rainfall_mm = EXCLUDED.minimum_rainfall_mm,
+                  maximum_rainfall_mm = EXCLUDED.maximum_rainfall_mm,
+                  median_rainfall_mm = EXCLUDED.median_rainfall_mm,
+                  rainfall_stddev_mm = EXCLUDED.rainfall_stddev_mm,
+                  valid_pixel_count = EXCLUDED.valid_pixel_count,
+                  source_url = EXCLUDED.source_url
+                """,
+                [{**row, "area_id": area_id, "source": source} for row in rows],
+            )
+        conn.commit()
+        return len(rows)
+
+
+def get_rainfall_trend(limit: int = 365) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        return conn.execute(
+            """
+            SELECT
+              rs.capture_date AS date,
+              rs.average_rainfall_mm,
+              rs.minimum_rainfall_mm,
+              rs.maximum_rainfall_mm,
+              rs.median_rainfall_mm,
+              rs.rainfall_stddev_mm,
+              rs.valid_pixel_count,
+              rs.source,
+              ra.id::text AS area_id
+            FROM rainfall_statistics rs
+            JOIN rainfall_areas ra ON ra.id = rs.area_id
+            WHERE rs.source = 'chirps-daily'
+            ORDER BY rs.capture_date DESC, rs.created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()[::-1]
 
 
 def upsert_context_layer(
@@ -791,10 +980,41 @@ def get_dashboard() -> dict[str, Any]:
             ORDER BY date
             """
         ).fetchall()
+        rainfall_area = conn.execute(
+            """
+            SELECT id::text, area_hash, ST_AsGeoJSON(bbox)::json AS bbox
+            FROM rainfall_areas
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        rainfall_trend = conn.execute(
+            """
+            SELECT
+              capture_date AS date,
+              average_rainfall_mm,
+              minimum_rainfall_mm,
+              maximum_rainfall_mm,
+              median_rainfall_mm,
+              rainfall_stddev_mm,
+              valid_pixel_count,
+              source
+            FROM rainfall_statistics
+            WHERE source = 'chirps-daily'
+            AND (
+              %(area_id)s::uuid IS NULL
+              OR area_id = %(area_id)s::uuid
+            )
+            ORDER BY capture_date
+            """,
+            {"area_id": rainfall_area["id"] if rainfall_area else None},
+        ).fetchall()
 
     return {
         "summary": summary,
         "lowest": lowest,
         "highest": highest,
         "trend": trend,
+        "rainfall_area": rainfall_area,
+        "rainfall_trend": rainfall_trend,
     }

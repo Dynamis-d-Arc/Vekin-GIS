@@ -246,6 +246,20 @@ button.is-active:hover {
   background: #954225;
 }
 
+button.danger-button {
+  color: #ffffff;
+  background: var(--warn);
+}
+
+button.danger-button:hover {
+  background: #954225;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
 a {
   display: inline-grid;
   min-height: 42px;
