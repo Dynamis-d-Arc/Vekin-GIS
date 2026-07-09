@@ -56,6 +56,7 @@ class RainfallProcessResponse(BaseModel):
     status: str
     source: str
     days_processed: int
+    grid_rows_processed: int
     start_date: date
     end_date: date
     average_rainfall_mm: float | None

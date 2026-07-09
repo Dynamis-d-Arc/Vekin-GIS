@@ -23,7 +23,9 @@ from app.repositories import (
     get_latest_context_statistics,
     get_metadata,
     get_ndvi_capture_dates_for_area,
+    ensure_grids_for_area,
     insert_ndvi_statistics,
+    insert_grid_rainfall_statistics,
     insert_rainfall_statistics,
     insert_satellite_image,
     update_satellite_status,
@@ -180,14 +182,21 @@ def process_ndvi_range(request: AreaDateRangeRequest) -> ProcessRangeResponse:
 def process_rainfall_range(request: AreaDateRangeRequest) -> RainfallProcessResponse:
     try:
         area_id = upsert_rainfall_area(request.area)
-        rows = calculate_rainfall_range(
+        grids = ensure_grids_for_area(request.area)
+        rows, grid_rows = calculate_rainfall_range(
             area_geojson=request.area,
+            grids=grids,
             start_date=request.start_date,
             end_date=request.end_date,
         )
         count = insert_rainfall_statistics(
             area_id=area_id,
             rows=rows,
+            source=CHIRPS_SOURCE,
+        )
+        grid_count = insert_grid_rainfall_statistics(
+            area_id=area_id,
+            rows=grid_rows,
             source=CHIRPS_SOURCE,
         )
     except (LookupError, ValueError) as exc:
@@ -207,6 +216,7 @@ def process_rainfall_range(request: AreaDateRangeRequest) -> RainfallProcessResp
         status="complete",
         source=CHIRPS_SOURCE,
         days_processed=count,
+        grid_rows_processed=grid_count,
         start_date=request.start_date,
         end_date=request.end_date,
         average_rainfall_mm=average,

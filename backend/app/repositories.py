@@ -108,6 +108,9 @@ def delete_processed_data() -> dict[str, int]:
             "ndvi_statistics": conn.execute("SELECT count(*) FROM ndvi_statistics").fetchone()["count"],
             "satellite_images": conn.execute("SELECT count(*) FROM satellite_images").fetchone()["count"],
             "rainfall_statistics": conn.execute("SELECT count(*) FROM rainfall_statistics").fetchone()["count"],
+            "rainfall_grid_statistics": conn.execute(
+                "SELECT count(*) FROM rainfall_grid_statistics"
+            ).fetchone()["count"],
             "rainfall_areas": conn.execute("SELECT count(*) FROM rainfall_areas").fetchone()["count"],
             "context_layers": conn.execute("SELECT count(*) FROM context_layers").fetchone()["count"],
             "dem_statistics": conn.execute(
@@ -273,6 +276,38 @@ def ensure_rainfall_tables() -> None:
               ON rainfall_statistics (capture_date)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rainfall_grid_statistics (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              area_id uuid NOT NULL REFERENCES rainfall_areas(id) ON DELETE CASCADE,
+              grid_id text NOT NULL REFERENCES grids(grid_id) ON DELETE CASCADE,
+              capture_date date NOT NULL,
+              source text NOT NULL DEFAULT 'chirps-daily',
+              average_rainfall_mm double precision,
+              minimum_rainfall_mm double precision,
+              maximum_rainfall_mm double precision,
+              median_rainfall_mm double precision,
+              rainfall_stddev_mm double precision,
+              valid_pixel_count integer NOT NULL DEFAULT 0,
+              source_url text,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (area_id, grid_id, capture_date, source)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rainfall_grid_statistics_grid_date
+              ON rainfall_grid_statistics (grid_id, capture_date)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_rainfall_grid_statistics_area_date
+              ON rainfall_grid_statistics (area_id, capture_date)
+            """
+        )
         conn.commit()
 
 
@@ -343,6 +378,61 @@ def insert_rainfall_statistics(
                   %(source_url)s
                 )
                 ON CONFLICT (area_id, capture_date, source)
+                DO UPDATE SET
+                  average_rainfall_mm = EXCLUDED.average_rainfall_mm,
+                  minimum_rainfall_mm = EXCLUDED.minimum_rainfall_mm,
+                  maximum_rainfall_mm = EXCLUDED.maximum_rainfall_mm,
+                  median_rainfall_mm = EXCLUDED.median_rainfall_mm,
+                  rainfall_stddev_mm = EXCLUDED.rainfall_stddev_mm,
+                  valid_pixel_count = EXCLUDED.valid_pixel_count,
+                  source_url = EXCLUDED.source_url
+                """,
+                [{**row, "area_id": area_id, "source": source} for row in rows],
+            )
+        conn.commit()
+        return len(rows)
+
+
+def insert_grid_rainfall_statistics(
+    *,
+    area_id: str,
+    rows: list[dict[str, Any]],
+    source: str = "chirps-daily",
+) -> int:
+    if not rows:
+        return 0
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO rainfall_grid_statistics (
+                  area_id,
+                  grid_id,
+                  capture_date,
+                  source,
+                  average_rainfall_mm,
+                  minimum_rainfall_mm,
+                  maximum_rainfall_mm,
+                  median_rainfall_mm,
+                  rainfall_stddev_mm,
+                  valid_pixel_count,
+                  source_url
+                )
+                VALUES (
+                  %(area_id)s,
+                  %(grid_id)s,
+                  %(capture_date)s,
+                  %(source)s,
+                  %(average_rainfall_mm)s,
+                  %(minimum_rainfall_mm)s,
+                  %(maximum_rainfall_mm)s,
+                  %(median_rainfall_mm)s,
+                  %(rainfall_stddev_mm)s,
+                  %(valid_pixel_count)s,
+                  %(source_url)s
+                )
+                ON CONFLICT (area_id, grid_id, capture_date, source)
                 DO UPDATE SET
                   average_rainfall_mm = EXCLUDED.average_rainfall_mm,
                   minimum_rainfall_mm = EXCLUDED.minimum_rainfall_mm,
@@ -1057,11 +1147,21 @@ def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
         ).fetchall()
         rainfall_area = conn.execute(
             """
-            SELECT id::text, area_hash, ST_AsGeoJSON(bbox)::json AS bbox
-            FROM rainfall_areas
+            SELECT ra.id::text, ra.area_hash, ST_AsGeoJSON(ra.bbox)::json AS bbox
+            FROM rainfall_areas ra
+            WHERE (
+              %(grid_id)s::text IS NULL
+              OR EXISTS (
+                SELECT 1
+                FROM rainfall_grid_statistics rgs
+                WHERE rgs.area_id = ra.id
+                  AND rgs.grid_id = %(grid_id)s::text
+              )
+            )
             ORDER BY updated_at DESC
             LIMIT 1
-            """
+            """,
+            params,
         ).fetchone()
         rainfall_trend = conn.execute(
             """
@@ -1075,14 +1175,30 @@ def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
               valid_pixel_count,
               source
             FROM rainfall_statistics
-            WHERE source = 'chirps-daily'
-            AND (
-              %(area_id)s::uuid IS NULL
-              OR area_id = %(area_id)s::uuid
-            )
-            ORDER BY capture_date
+            WHERE %(grid_id)s::text IS NULL
+              AND source = 'chirps-daily'
+              AND area_id = %(area_id)s::uuid
+            UNION ALL
+            SELECT
+              capture_date AS date,
+              average_rainfall_mm,
+              minimum_rainfall_mm,
+              maximum_rainfall_mm,
+              median_rainfall_mm,
+              rainfall_stddev_mm,
+              valid_pixel_count,
+              source
+            FROM rainfall_grid_statistics
+            WHERE %(grid_id)s::text IS NOT NULL
+              AND grid_id = %(grid_id)s::text
+              AND source = 'chirps-daily'
+              AND area_id = %(area_id)s::uuid
+            ORDER BY date
             """,
-            {"area_id": rainfall_area["id"] if rainfall_area else None},
+            {
+                "area_id": rainfall_area["id"] if rainfall_area else None,
+                "grid_id": grid_id,
+            },
         ).fetchall()
 
     return {

@@ -575,6 +575,9 @@ async function loadDataDashboard() {
       }
     : context;
 
+  document.getElementById("rainfall-trend-scope").textContent = selectedGridId
+    ? `CHIRPS Daily rainfall for ${selectedGridId}`
+    : "CHIRPS Daily average rainfall for the selected area";
   renderOverview({ dashboard, grids: filteredGrids, context: filteredContext });
   renderContextLayer(context);
   renderGridTable();

@@ -99,16 +99,63 @@ def calculate_area_rainfall_statistics(
     }
 
 
+def calculate_grid_rainfall_statistics(
+    *,
+    rainfall_path: Path,
+    grids: list[dict[str, Any]],
+    capture_date: date,
+    source_url: str,
+) -> list[dict[str, Any]]:
+    if not grids:
+        return []
+
+    with rasterio.open(rainfall_path) as src:
+        geometries = [
+            transform_geom("EPSG:4326", src.crs, grid["geometry"])
+            for grid in grids
+        ]
+        nodata = src.nodata if src.nodata is not None else -9999
+
+    statistics = zonal_stats(
+        geometries,
+        rainfall_path,
+        stats=["mean", "min", "max", "median", "std", "count"],
+        all_touched=True,
+        nodata=nodata,
+    )
+    rows = []
+    for grid, stats in zip(grids, statistics, strict=True):
+        valid_pixel_count = int(stats.get("count") or 0)
+        if valid_pixel_count == 0 or stats.get("mean") is None:
+            continue
+        rows.append(
+            {
+                "grid_id": grid["grid_id"],
+                "capture_date": capture_date,
+                "average_rainfall_mm": stats.get("mean"),
+                "minimum_rainfall_mm": stats.get("min"),
+                "maximum_rainfall_mm": stats.get("max"),
+                "median_rainfall_mm": stats.get("median"),
+                "rainfall_stddev_mm": stats.get("std"),
+                "valid_pixel_count": valid_pixel_count,
+                "source_url": source_url,
+            }
+        )
+    return rows
+
+
 def calculate_rainfall_range(
     *,
     area_geojson: dict[str, Any],
+    grids: list[dict[str, Any]],
     start_date: date,
     end_date: date,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if end_date < start_date:
         raise ValueError("end_date must be on or after start_date")
 
     rows: list[dict[str, Any]] = []
+    grid_rows: list[dict[str, Any]] = []
     for capture_date in _daterange(start_date, end_date):
         rainfall_path, source_url = download_chirps_daily(capture_date)
         row = calculate_area_rainfall_statistics(
@@ -119,4 +166,12 @@ def calculate_rainfall_range(
         )
         if row["valid_pixel_count"] > 0 and row["average_rainfall_mm"] is not None:
             rows.append(row)
-    return rows
+        grid_rows.extend(
+            calculate_grid_rainfall_statistics(
+                rainfall_path=rainfall_path,
+                grids=grids,
+                capture_date=capture_date,
+                source_url=source_url,
+            )
+        )
+    return rows, grid_rows

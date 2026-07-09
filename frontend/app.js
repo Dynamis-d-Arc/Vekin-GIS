@@ -699,7 +699,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       : `Complete. Processed ${result.grids_processed} grid cells for ${new Date(displayCaptureDate).toLocaleDateString()}.`;
     const rainfallStatus = rainfall.error
       ? ` CHIRPS rainfall skipped: ${rainfall.error.message}`
-      : ` CHIRPS rainfall days: ${rainfall.days_processed}.`;
+      : ` CHIRPS rainfall: ${rainfall.days_processed} days across ${rainfall.grid_rows_processed} grid/date rows.`;
     setStatus(`${completion}${rainfallStatus}${suffix}`);
     map.fitBounds(selectedArea.getBounds(), { padding: [24, 24] });
   } catch (error) {
