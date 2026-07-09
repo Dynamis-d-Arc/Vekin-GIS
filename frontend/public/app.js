@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:8000";
+const API_BASE = window.VEKIN_API_BASE || "http://localhost:8000";
 const bangkokBounds = [
   [13.494, 100.327],
   [13.955, 100.938],

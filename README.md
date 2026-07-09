@@ -8,7 +8,7 @@ The platform does not keep a permanent Sentinel-2 archive. It queries cloud-host
 
 - PostgreSQL/PostGIS for grids, image metadata, and NDVI statistics
 - FastAPI backend for STAC search, NDVI processing, and analytics APIs
-- Leaflet frontend for the GIS portal and dashboard
+- Next.js App Router frontend with Leaflet and Chart.js
 - Microsoft Planetary Computer STAC as the preferred imagery source
 
 ## Quick Start
@@ -51,9 +51,18 @@ The platform does not keep a permanent Sentinel-2 archive. It queries cloud-host
    uvicorn app.main:app --app-dir backend --reload
    ```
 
-6. Open `frontend/index.html` in a browser.
+6. Start the frontend:
 
-The frontend expects the backend at `http://localhost:8000`.
+   ```powershell
+   cd frontend
+   npm.cmd install
+   npm.cmd run dev
+   ```
+
+7. Open `http://localhost:3000`.
+
+The frontend expects the backend at `http://localhost:8000`. Override it with
+`NEXT_PUBLIC_API_BASE_URL` when needed.
 
 Use `scripts/demo-api.mjs` only for frontend demos. Real NDVI values require the Docker/API backend, PostGIS, and network access to Microsoft Planetary Computer.
 

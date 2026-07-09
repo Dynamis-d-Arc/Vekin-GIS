@@ -1,3 +1,5 @@
+@import "leaflet/dist/leaflet.css";
+
 :root {
   color-scheme: light;
   --ink: #1a2521;
@@ -405,9 +407,15 @@ li {
 .data-dashboard {
   display: grid;
   gap: 22px;
-  width: min(1480px, 100%);
+  width: 100%;
+  max-width: 1480px;
+  min-width: 0;
   margin: 0 auto;
   padding: 28px;
+}
+
+.data-dashboard > * {
+  min-width: 0;
 }
 
 .dashboard-header {
@@ -703,5 +711,31 @@ tr:last-child td {
 
   .two-column-section {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .map-panel {
+    min-height: 100vh;
+  }
+
+  .control-panel {
+    right: 12px;
+    left: 52px;
+    width: auto;
+    max-height: calc(100vh - 36px);
+    overflow-y: auto;
+  }
+
+  .data-dashboard {
+    padding: 12px;
+  }
+
+  .dashboard-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-actions > * {
+    width: 100%;
   }
 }
