@@ -21,7 +21,15 @@
         </div>
       </header>
 
-      <p id="dashboard-status" class="dashboard-status">Loading data from the local API...</p>
+      <div class="dashboard-filter-bar">
+        <p id="dashboard-status" class="dashboard-status">Loading data from the local API...</p>
+        <label for="dashboard-grid-filter">
+          Grid
+          <select id="dashboard-grid-filter">
+            <option value="">All grids</option>
+          </select>
+        </label>
+      </div>
 
       <section class="data-section">
         <h2>Overview</h2>

@@ -1,6 +1,7 @@
 const API_BASE = "http://localhost:8000";
 
 let gridRows = [];
+let allGridRows = [];
 const charts = {};
 
 const palette = {
@@ -533,21 +534,54 @@ function renderInsights({ dashboard, context }) {
 
 async function loadDataDashboard() {
   setStatus("Loading data from the local API...");
+  const gridFilter = document.getElementById("dashboard-grid-filter");
+  const selectedGridId = gridFilter.value;
+  const dashboardPath = selectedGridId
+    ? `/api/dashboard?grid_id=${encodeURIComponent(selectedGridId)}`
+    : "/api/dashboard";
   const [dashboard, metadata, context, grids] = await Promise.all([
-    fetchJson("/api/dashboard"),
+    fetchJson(dashboardPath),
     fetchJson("/api/metadata"),
     fetchJson("/api/context/statistics/latest"),
     fetchJson("/api/grids"),
   ]);
 
-  gridRows = grids.features.map((feature) => feature.properties);
-  renderOverview({ dashboard, grids, context });
+  allGridRows = grids.features.map((feature) => feature.properties);
+  const gridIds = [...new Set(allGridRows.map((row) => row.grid_id))].sort();
+  gridFilter.innerHTML = '<option value="">All grids</option>';
+  gridIds.forEach((gridId) => {
+    const option = document.createElement("option");
+    option.value = gridId;
+    option.textContent = gridId;
+    option.selected = gridId === selectedGridId;
+    gridFilter.appendChild(option);
+  });
+
+  gridRows = selectedGridId
+    ? allGridRows.filter((row) => row.grid_id === selectedGridId)
+    : allGridRows;
+  const filteredGrids = {
+    ...grids,
+    features: selectedGridId
+      ? grids.features.filter((feature) => feature.properties.grid_id === selectedGridId)
+      : grids.features,
+  };
+  const filteredContext = selectedGridId
+    ? {
+        ...context,
+        dem_statistics: (context.dem_statistics || []).filter((row) => row.grid_id === selectedGridId),
+        land_cover_statistics: (context.land_cover_statistics || []).filter((row) => row.grid_id === selectedGridId),
+        urban_context_statistics: (context.urban_context_statistics || []).filter((row) => row.grid_id === selectedGridId),
+      }
+    : context;
+
+  renderOverview({ dashboard, grids: filteredGrids, context: filteredContext });
   renderContextLayer(context);
   renderGridTable();
   renderMetadataTable(metadata);
-  renderCharts({ dashboard, metadata, context });
-  renderInsights({ dashboard, context });
-  setStatus(`Loaded ${gridRows.length.toLocaleString()} grid rows.`);
+  renderCharts({ dashboard, metadata, context: filteredContext });
+  renderInsights({ dashboard, context: filteredContext });
+  setStatus(selectedGridId ? `Showing ${selectedGridId}.` : `Loaded ${gridRows.length.toLocaleString()} grid rows.`);
 }
 
 async function deleteDashboardData() {
@@ -581,6 +615,12 @@ document.getElementById("delete-dashboard-data").addEventListener("click", () =>
 });
 
 document.getElementById("grid-filter").addEventListener("input", renderGridTable);
+document.getElementById("dashboard-grid-filter").addEventListener("change", () => {
+  document.getElementById("grid-filter").value = "";
+  loadDataDashboard().catch((error) => {
+    setStatus(`Dashboard load failed: ${error.message}`);
+  });
+});
 
 loadDataDashboard().catch((error) => {
   setStatus(`Dashboard load failed: ${error.message}`);

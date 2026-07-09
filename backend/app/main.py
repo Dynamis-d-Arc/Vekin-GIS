@@ -225,8 +225,8 @@ def grids(capture_date: datetime | None = None) -> dict[str, Any]:
 
 
 @app.get("/api/dashboard")
-def dashboard() -> dict[str, Any]:
-    return get_dashboard()
+def dashboard(grid_id: str | None = None) -> dict[str, Any]:
+    return get_dashboard(grid_id)
 
 
 @app.delete("/api/dashboard/data")

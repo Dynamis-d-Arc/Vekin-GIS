@@ -973,7 +973,8 @@ def get_latest_context_statistics() -> dict[str, Any]:
     }
 
 
-def get_dashboard() -> dict[str, Any]:
+def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
+    params = {"grid_id": grid_id}
     with get_connection() as conn:
         summary = conn.execute(
             """
@@ -985,6 +986,7 @@ def get_dashboard() -> dict[str, Any]:
                 minimum_ndvi,
                 maximum_ndvi
               FROM ndvi_statistics
+              WHERE (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
               ORDER BY grid_id, capture_date, created_at DESC
             )
             SELECT
@@ -992,7 +994,8 @@ def get_dashboard() -> dict[str, Any]:
               min(minimum_ndvi) AS minimum_ndvi,
               max(maximum_ndvi) AS maximum_ndvi
             FROM latest_stats
-            """
+            """,
+            params,
         ).fetchone()
         lowest = conn.execute(
             """
@@ -1002,6 +1005,7 @@ def get_dashboard() -> dict[str, Any]:
                 capture_date,
                 average_ndvi
               FROM ndvi_statistics
+              WHERE (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
               ORDER BY grid_id, capture_date, created_at DESC
             )
             SELECT grid_id, average_ndvi, capture_date
@@ -1009,7 +1013,8 @@ def get_dashboard() -> dict[str, Any]:
             WHERE average_ndvi IS NOT NULL
             ORDER BY average_ndvi ASC
             LIMIT 10
-            """
+            """,
+            params,
         ).fetchall()
         highest = conn.execute(
             """
@@ -1019,6 +1024,7 @@ def get_dashboard() -> dict[str, Any]:
                 capture_date,
                 average_ndvi
               FROM ndvi_statistics
+              WHERE (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
               ORDER BY grid_id, capture_date, created_at DESC
             )
             SELECT grid_id, average_ndvi, capture_date
@@ -1026,7 +1032,8 @@ def get_dashboard() -> dict[str, Any]:
             WHERE average_ndvi IS NOT NULL
             ORDER BY average_ndvi DESC
             LIMIT 10
-            """
+            """,
+            params,
         ).fetchall()
         trend = conn.execute(
             """
@@ -1036,13 +1043,15 @@ def get_dashboard() -> dict[str, Any]:
                 capture_date,
                 average_ndvi
               FROM ndvi_statistics
+              WHERE (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
               ORDER BY grid_id, capture_date, created_at DESC
             )
             SELECT capture_date::date AS date, avg(average_ndvi) AS average_ndvi
             FROM latest_stats
             GROUP BY capture_date::date
             ORDER BY date
-            """
+            """,
+            params,
         ).fetchall()
         rainfall_area = conn.execute(
             """
