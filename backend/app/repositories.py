@@ -104,6 +104,7 @@ def delete_processed_data() -> dict[str, int]:
     with get_connection() as conn:
         stats_schema = get_context_statistics_schema(conn)
         counts = {
+            "grids": conn.execute("SELECT count(*) FROM grids").fetchone()["count"],
             "ndvi_statistics": conn.execute("SELECT count(*) FROM ndvi_statistics").fetchone()["count"],
             "satellite_images": conn.execute("SELECT count(*) FROM satellite_images").fetchone()["count"],
             "rainfall_statistics": conn.execute("SELECT count(*) FROM rainfall_statistics").fetchone()["count"],
@@ -124,6 +125,7 @@ def delete_processed_data() -> dict[str, int]:
         conn.execute("DELETE FROM satellite_images")
         conn.execute("DELETE FROM rainfall_areas")
         conn.execute("DELETE FROM context_layers")
+        conn.execute("DELETE FROM grids")
         conn.commit()
         return counts
 

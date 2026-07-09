@@ -586,7 +586,7 @@ async function loadDataDashboard() {
 
 async function deleteDashboardData() {
   const confirmed = window.confirm(
-    "Delete all processed dashboard data? This clears NDVI, rainfall, satellite metadata, and context layer results. Base grid cells stay available.",
+    "Delete all dashboard data? This permanently clears grids, NDVI/NDBI, rainfall, satellite metadata, and context layer results.",
   );
   if (!confirmed) return;
 
@@ -596,7 +596,7 @@ async function deleteDashboardData() {
   try {
     const result = await fetchJson("/api/dashboard/data", { method: "DELETE" });
     await loadDataDashboard();
-    setStatus(`Deleted ${formatCompactNumber(result.total_deleted)} processed records. Base grid cells were kept.`);
+    setStatus(`Deleted ${formatCompactNumber(result.total_deleted)} records, including all grid cells.`);
   } catch (error) {
     setStatus(`Delete failed: ${error.message}`);
   } finally {
