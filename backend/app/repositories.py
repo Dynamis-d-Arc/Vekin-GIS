@@ -122,6 +122,9 @@ def delete_processed_data() -> dict[str, int]:
             "urban_context_statistics": conn.execute(
                 sql.SQL("SELECT count(*) FROM {}").format(_stats_table(stats_schema, "urban_context_statistics"))
             ).fetchone()["count"],
+            "population_statistics": conn.execute(
+                sql.SQL("SELECT count(*) FROM {}").format(_stats_table(stats_schema, "population_statistics"))
+            ).fetchone()["count"],
         }
 
         conn.execute("DELETE FROM ndvi_statistics")
@@ -219,6 +222,33 @@ def ensure_context_statistics_tables() -> None:
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (context_layer_id)").format(
                 sql.Identifier(f"idx_{stats_schema}_urban_context_statistics_context_layer_id"),
                 _stats_table(stats_schema, "urban_context_statistics"),
+            )
+        )
+        conn.execute(
+            sql.SQL(
+                """
+            CREATE TABLE IF NOT EXISTS {} (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              grid_id text NOT NULL REFERENCES public.grids(grid_id) ON DELETE CASCADE,
+              context_layer_id uuid NOT NULL REFERENCES public.context_layers(id) ON DELETE CASCADE,
+              population_year integer NOT NULL,
+              population_count double precision,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (grid_id, context_layer_id, population_year)
+            )
+            """
+            ).format(_stats_table(stats_schema, "population_statistics"))
+        )
+        conn.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (grid_id, population_year)").format(
+                sql.Identifier(f"idx_{stats_schema}_population_statistics_grid_year"),
+                _stats_table(stats_schema, "population_statistics"),
+            )
+        )
+        conn.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (context_layer_id)").format(
+                sql.Identifier(f"idx_{stats_schema}_population_statistics_context_layer_id"),
+                _stats_table(stats_schema, "population_statistics"),
             )
         )
         conn.commit()
@@ -556,6 +586,7 @@ def insert_context_statistics(
     dem_rows: list[dict[str, Any]],
     land_cover_rows: list[dict[str, Any]],
     urban_context_rows: list[dict[str, Any]] | None = None,
+    population_rows: list[dict[str, Any]] | None = None,
 ) -> None:
     with get_connection() as conn:
         stats_schema = get_context_statistics_schema(conn)
@@ -575,6 +606,12 @@ def insert_context_statistics(
             cur.execute(
                 sql.SQL("DELETE FROM {} WHERE context_layer_id = %s").format(
                     _stats_table(stats_schema, "urban_context_statistics")
+                ),
+                (context_layer_id,),
+            )
+            cur.execute(
+                sql.SQL("DELETE FROM {} WHERE context_layer_id = %s").format(
+                    _stats_table(stats_schema, "population_statistics")
                 ),
                 (context_layer_id,),
             )
@@ -665,6 +702,29 @@ def insert_context_statistics(
                     """
                     ).format(_stats_table(stats_schema, "urban_context_statistics")),
                     [{**row, "context_layer_id": context_layer_id} for row in urban_context_rows],
+                )
+            if population_rows:
+                cur.executemany(
+                    sql.SQL(
+                        """
+                    INSERT INTO {} (
+                      grid_id,
+                      context_layer_id,
+                      population_year,
+                      population_count
+                    )
+                    VALUES (
+                      %(grid_id)s,
+                      %(context_layer_id)s,
+                      %(population_year)s,
+                      %(population_count)s
+                    )
+                    ON CONFLICT (grid_id, context_layer_id, population_year)
+                    DO UPDATE SET
+                      population_count = EXCLUDED.population_count
+                    """
+                    ).format(_stats_table(stats_schema, "population_statistics")),
+                    [{**row, "context_layer_id": context_layer_id} for row in population_rows],
                 )
         conn.commit()
 
@@ -1032,6 +1092,7 @@ def get_latest_context_statistics() -> dict[str, Any]:
                 "dem_statistics": [],
                 "land_cover_statistics": [],
                 "urban_context_statistics": [],
+                "population_statistics": [],
             }
 
         dem_rows = conn.execute(
@@ -1082,13 +1143,62 @@ def get_latest_context_statistics() -> dict[str, Any]:
             ).format(_stats_table(stats_schema, "urban_context_statistics")),
             (context_layer["id"],),
         ).fetchall()
+        population_rows = conn.execute(
+            sql.SQL(
+                """
+            SELECT
+              grid_id,
+              population_year,
+              population_count,
+              created_at
+            FROM {}
+            WHERE context_layer_id = %s
+            ORDER BY grid_id, population_year
+            """
+            ).format(_stats_table(stats_schema, "population_statistics")),
+            (context_layer["id"],),
+        ).fetchall()
 
     return {
         "context_layer": context_layer,
         "dem_statistics": dem_rows,
         "land_cover_statistics": land_cover_rows,
         "urban_context_statistics": urban_context_rows,
+        "population_statistics": population_rows,
     }
+
+
+def get_population_trend(grid_id: str | None = None) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        stats_schema = get_context_statistics_schema(conn)
+        context_layer = conn.execute(
+            """
+            SELECT id::text
+            FROM context_layers
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not context_layer:
+            return []
+
+        rows = conn.execute(
+            sql.SQL(
+                """
+            SELECT
+              population_year,
+              avg(population_count) AS population_count
+            FROM {}
+            WHERE context_layer_id = %(context_layer_id)s
+              AND (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
+              AND population_count IS NOT NULL
+            GROUP BY population_year
+            ORDER BY population_year
+            """
+            ).format(_stats_table(stats_schema, "population_statistics")),
+            {"context_layer_id": context_layer["id"], "grid_id": grid_id},
+        ).fetchall()
+    return rows
 
 
 def get_dashboard(

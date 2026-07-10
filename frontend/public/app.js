@@ -329,6 +329,7 @@ let gridLayerRequestId = 0;
 let selectedGridTrendRequestId = 0;
 let currentGridFeatures = [];
 let selectedGridTrendRows = [];
+let selectedPopulationTrendRows = [];
 const drawButton = document.getElementById("draw-box-button");
 const bboxLabel = document.getElementById("bbox-label");
 
@@ -812,6 +813,98 @@ function renderDetailLandCoverChart(percentages = {}) {
   });
 }
 
+function renderDetailPopulationBarChart(rows, selectedValue, baselineValue) {
+  const points = (rows || [])
+    .map((row) => ({
+      label: String(row.population_year),
+      value: Number(row.population_count),
+    }))
+    .filter((row) => row.label && Number.isFinite(row.value));
+  const labels = points.length ? points.map((point) => point.label) : ["Selected", "Displayed avg"];
+  const values = points.length ? points.map((point) => point.value) : [Number(selectedValue) || 0, Number(baselineValue) || 0];
+
+  renderDetailChart("analysis-population-chart", {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Population",
+          data: values,
+          backgroundColor: points.length ? "rgba(163, 230, 53, 0.76)" : ["rgba(163, 230, 53, 0.82)", "rgba(103, 232, 249, 0.62)"],
+          borderColor: points.length ? detailChartPalette.green : [detailChartPalette.green, detailChartPalette.blue],
+          borderWidth: 1,
+          borderRadius: 6,
+        },
+      ],
+    },
+    options: detailChartBaseOptions({
+      plugins: {
+        ...detailChartBaseOptions().plugins,
+        legend: { display: false },
+      },
+      scales: {
+        x: {
+          ticks: { color: detailChartPalette.muted },
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            color: detailChartPalette.muted,
+            callback: (value) => formatCompactNumber(value),
+          },
+          grid: { color: "rgba(159, 199, 200, 0.18)" },
+        },
+      },
+    }),
+  });
+}
+
+function renderDetailGreenCoverLineChart(selectedValue, baselineValue) {
+  const selected = Number(selectedValue);
+  const baseline = Number(baselineValue);
+  const points = [
+    Number.isFinite(baseline) ? baseline : null,
+    Number.isFinite(selected) ? selected : null,
+  ];
+
+  renderDetailChart("analysis-green-chart", {
+    type: "line",
+    data: {
+      labels: ["Displayed avg", "Selected"],
+      datasets: [
+        {
+          label: "Green Cover",
+          data: points,
+          borderColor: detailChartPalette.green,
+          backgroundColor: "rgba(27, 127, 90, 0.2)",
+          fill: true,
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          tension: 0.32,
+        },
+      ],
+    },
+    options: detailChartBaseOptions({
+      scales: {
+        x: {
+          ticks: { color: detailChartPalette.muted, maxRotation: 0 },
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            color: detailChartPalette.muted,
+            callback: (value) => `${value}%`,
+          },
+          grid: { color: "rgba(159, 199, 200, 0.18)" },
+        },
+      },
+    }),
+  });
+}
+
 function renderMiniLineChart(id, rows, valueKey, color = "#a3e635") {
   const node = document.getElementById(id);
   if (!node) return;
@@ -891,7 +984,11 @@ function renderMiniComparisonChart(id, selectedValue, baselineValue, options = {
   `;
 }
 
-function renderSelectedGridAnalysis(properties = {}, trendRows = selectedGridTrendRows) {
+function renderSelectedGridAnalysis(
+  properties = {},
+  trendRows = selectedGridTrendRows,
+  populationTrendRows = selectedPopulationTrendRows,
+) {
   const rows = visibleGridRows();
   const ndbiAverage = averageFinite(rows.map((row) => row.average_ndbi));
   const builtUpTotal = sumFinite(rows.map((row) => row.built_up_area_square_meters));
@@ -930,12 +1027,8 @@ function renderSelectedGridAnalysis(properties = {}, trendRows = selectedGridTre
   renderMiniComparisonChart("analysis-road-chart", properties.road_density_km_per_square_km, roadAverage, {
     formatter: (value) => formatOptionalNumber(value),
   });
-  renderMiniComparisonChart("analysis-population-chart", properties.population_count, populationTotal / Math.max(rows.length, 1), {
-    formatter: formatOptionalCompact,
-  });
-  renderMiniComparisonChart("analysis-green-chart", properties.green_cover_percentage, greenAverage, {
-    formatter: formatOptionalPercent,
-  });
+  renderDetailPopulationBarChart(populationTrendRows, properties.population_count, populationTotal / Math.max(rows.length, 1));
+  renderDetailGreenCoverLineChart(properties.green_cover_percentage, greenAverage);
   renderMiniComparisonChart("analysis-elev-avg-chart", properties.average_elevation, averageFinite(rows.map((row) => row.average_elevation)), {
     formatter: (value) => `${formatOptionalNumber(value)} m`,
   });
@@ -947,7 +1040,11 @@ function renderSelectedGridAnalysis(properties = {}, trendRows = selectedGridTre
   });
 }
 
-function renderGridDataValues(properties = {}, trendRows = selectedGridTrendRows) {
+function renderGridDataValues(
+  properties = {},
+  trendRows = selectedGridTrendRows,
+  populationTrendRows = selectedPopulationTrendRows,
+) {
   setText("grid-id", properties.grid_id || "0");
   setText("grid-ndvi", formatOptionalNumber(properties.average_ndvi));
   setText("grid-ndbi", formatOptionalNumber(properties.average_ndbi));
@@ -963,7 +1060,7 @@ function renderGridDataValues(properties = {}, trendRows = selectedGridTrendRows
   setText("grid-elev-max", formatOptionalNumber(properties.maximum_elevation));
   setText("grid-land-cover", landCoverLabel(properties.dominant_land_cover_class));
   setText("grid-cover-mix", formatCoverMix(properties.land_cover_percentages));
-  renderSelectedGridAnalysis(properties, trendRows);
+  renderSelectedGridAnalysis(properties, trendRows, populationTrendRows);
 }
 
 function renderSelectedGridInfo(feature) {
@@ -988,10 +1085,15 @@ function renderSelectedGridInfo(feature) {
 async function loadSelectedGridTrend(gridId, properties) {
   const requestId = ++selectedGridTrendRequestId;
   const params = appendDateRangeParams(new URLSearchParams([["grid_id", gridId]]));
-  const dashboard = await fetchJson(`/api/dashboard?${params.toString()}`);
+  const populationParams = new URLSearchParams([["grid_id", gridId]]);
+  const [dashboard, populationTrend] = await Promise.all([
+    fetchJson(`/api/dashboard?${params.toString()}`),
+    fetchJson(`/api/population/trend?${populationParams.toString()}`),
+  ]);
   if (requestId !== selectedGridTrendRequestId) return;
   selectedGridTrendRows = dashboard.trend || [];
-  renderSelectedGridAnalysis(properties, selectedGridTrendRows);
+  selectedPopulationTrendRows = populationTrend || [];
+  renderSelectedGridAnalysis(properties, selectedGridTrendRows, selectedPopulationTrendRows);
 }
 
 function popupContent(p) {
@@ -1120,6 +1222,7 @@ async function loadGridLayer(captureDate = null) {
   if (requestId !== gridLayerRequestId) return;
   currentGridFeatures = grid.features || [];
   selectedGridTrendRows = [];
+  selectedPopulationTrendRows = [];
   if (overlays.Grids) {
     map.removeLayer(overlays.Grids);
     layerControl.removeLayer(overlays.Grids);

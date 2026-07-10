@@ -1,4 +1,5 @@
 from functools import lru_cache
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
         "WorldPop_Population_Density_100m/ImageServer/exportImage"
     )
     worldpop_population_time_ms: int = 1577836800000
+    worldpop_population_years: str = "2020,2021,2022,2023,2024"
     overpass_api_url: str = "https://overpass-api.de/api/interpreter"
     overpass_timeout_seconds: int = 45
     cors_origins: str = "*"
@@ -38,3 +40,7 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def population_year_time_ms(year: int) -> int:
+    return int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)

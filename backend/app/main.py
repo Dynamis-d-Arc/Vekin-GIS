@@ -23,6 +23,7 @@ from app.repositories import (
     get_latest_context_statistics,
     get_metadata,
     get_ndvi_capture_dates_for_area,
+    get_population_trend,
     ensure_grids_for_area,
     insert_ndvi_statistics,
     insert_grid_rainfall_statistics,
@@ -250,6 +251,11 @@ def dashboard(
     end_date: date | None = None,
 ) -> dict[str, Any]:
     return get_dashboard(grid_id, start_date=start_date, end_date=end_date)
+
+
+@app.get("/api/population/trend")
+def population_trend(grid_id: str | None = None) -> list[dict[str, Any]]:
+    return get_population_trend(grid_id)
 
 
 @app.delete("/api/dashboard/data")

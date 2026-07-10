@@ -91,4 +91,29 @@ BEGIN
     'idx_urban_context_statistics_context_layer_id',
     stats_schema
   );
+
+  EXECUTE format(
+    'CREATE TABLE IF NOT EXISTS %I.population_statistics (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      grid_id text NOT NULL REFERENCES public.grids(grid_id) ON DELETE CASCADE,
+      context_layer_id uuid NOT NULL REFERENCES public.context_layers(id) ON DELETE CASCADE,
+      population_year integer NOT NULL,
+      population_count double precision,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (grid_id, context_layer_id, population_year)
+    )',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'CREATE INDEX IF NOT EXISTS %I ON %I.population_statistics (grid_id, population_year)',
+    'idx_population_statistics_grid_year',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'CREATE INDEX IF NOT EXISTS %I ON %I.population_statistics (context_layer_id)',
+    'idx_population_statistics_context_layer_id',
+    stats_schema
+  );
 END $$;

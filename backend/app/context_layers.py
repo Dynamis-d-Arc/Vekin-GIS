@@ -19,7 +19,7 @@ from rasterstats import zonal_stats
 from pyproj import Geod
 from shapely.geometry import LineString, MultiLineString, box, mapping, shape
 
-from app.config import get_settings
+from app.config import get_settings, population_year_time_ms
 from app.repositories import ensure_grids_for_area, insert_context_statistics, upsert_context_layer
 
 
@@ -112,6 +112,7 @@ def _read_worldpop_density(
     *,
     bbox_values: tuple[float, float, float, float],
     output_path: Path,
+    time_ms: int | None = None,
 ) -> tuple[np.ndarray, Affine, Any]:
     settings = get_settings()
     west, south, east, north = bbox_values
@@ -127,13 +128,27 @@ def _read_worldpop_density(
         "size": f"{width},{height}",
         "format": "tiff",
         "pixelType": "F32",
-        "time": settings.worldpop_population_time_ms,
+        "time": time_ms if time_ms is not None else settings.worldpop_population_time_ms,
         "f": "image",
     }
     url = f"{settings.worldpop_population_density_url}?{urlencode(params)}"
     urlretrieve(url, output_path)
     with rasterio.open(output_path) as dataset:
         return dataset.read(1), dataset.transform, dataset.crs
+
+
+def _worldpop_years() -> list[int]:
+    settings = get_settings()
+    years: list[int] = []
+    for value in settings.worldpop_population_years.split(","):
+        value = value.strip()
+        if not value:
+            continue
+        try:
+            years.append(int(value))
+        except ValueError:
+            continue
+    return sorted(set(years)) or [2020]
 
 
 def _read_osm_roads(
@@ -271,14 +286,12 @@ def _context_grid_statistics(
     land_cover: np.ndarray,
     land_cover_transform: Affine,
     land_cover_crs: Any,
-    population_density: np.ndarray | None,
-    population_density_transform: Affine | None,
-    population_density_crs: Any,
+    population_density_by_year: dict[int, tuple[np.ndarray, Affine, Any]],
     road_lines: list[LineString] | None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     grids = ensure_grids_for_area(area_geojson)
     if not grids:
-        return [], [], []
+        return [], [], [], []
 
     dem_geometries = [
         transform_geom("EPSG:4326", dem_crs, grid["geometry"])
@@ -308,15 +321,19 @@ def _context_grid_statistics(
         geojson_out=False,
         nodata=0,
     )
-    population_stats = [None] * len(grids)
-    if population_density is not None and population_density_transform is not None:
+    population_stats_by_year: dict[int, list[dict[str, Any] | None]] = {}
+    for population_year, (
+        population_density,
+        population_density_transform,
+        population_density_crs,
+    ) in population_density_by_year.items():
         population_geometries = [
             transform_geom("EPSG:4326", population_density_crs, grid["geometry"])
             if population_density_crs
             else grid["geometry"]
             for grid in grids
         ]
-        population_stats = zonal_stats(
+        population_stats_by_year[population_year] = zonal_stats(
             population_geometries,
             population_density.astype("float32"),
             affine=population_density_transform,
@@ -324,17 +341,24 @@ def _context_grid_statistics(
             geojson_out=False,
             nodata=-3.402823e38,
         )
+    latest_population_year = max(population_stats_by_year, default=None)
+    population_stats = (
+        population_stats_by_year[latest_population_year]
+        if latest_population_year is not None
+        else [None] * len(grids)
+    )
 
     dem_rows: list[dict[str, Any]] = []
     land_cover_rows: list[dict[str, Any]] = []
     urban_context_rows: list[dict[str, Any]] = []
-    for grid, dem_stat, land_cover_stat, population_stat in zip(
+    population_rows: list[dict[str, Any]] = []
+    for grid_index, (grid, dem_stat, land_cover_stat, population_stat) in enumerate(zip(
         grids,
         dem_stats,
         land_cover_stats,
         population_stats,
         strict=True,
-    ):
+    )):
         dem_rows.append(
             {
                 "grid_id": grid["grid_id"],
@@ -378,6 +402,24 @@ def _context_grid_statistics(
             if population_density_mean is not None
             else None
         )
+        for population_year, year_stats in population_stats_by_year.items():
+            year_stat = year_stats[grid_index]
+            year_density_mean = (
+                _clean_float(year_stat.get("mean"))
+                if year_stat
+                else None
+            )
+            population_rows.append(
+                {
+                    "grid_id": grid["grid_id"],
+                    "population_year": population_year,
+                    "population_count": (
+                        round(year_density_mean * grid_area_square_meters / 1_000_000, 2)
+                        if year_density_mean is not None
+                        else None
+                    ),
+                }
+            )
         road_density = _road_density_km_per_square_km(
             grid_geometry_geojson=grid["geometry"],
             road_lines=road_lines,
@@ -400,7 +442,7 @@ def _context_grid_statistics(
             }
         )
 
-    return dem_rows, land_cover_rows, urban_context_rows
+    return dem_rows, land_cover_rows, urban_context_rows, population_rows
 
 
 def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
@@ -417,7 +459,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     key = hashlib.sha1(",".join(f"{value:.6f}" for value in bbox_values).encode("utf-8")).hexdigest()[:16]
     dem_path = settings.context_temp_dir / f"{key}-dem.png"
     land_cover_path = settings.context_temp_dir / f"{key}-land-cover.png"
-    population_density_path = settings.context_temp_dir / f"{key}-population-density.tif"
+    population_years = _worldpop_years()
 
     dem, dem_transform, dem_crs, dem_overlay = _read_mosaic(
         collection="cop-dem-glo-30",
@@ -437,16 +479,17 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     if not land_cover_path.exists():
         _rgba_png(land_cover_path, _land_cover_rgba(land_cover_overlay))
 
-    population_density = None
-    population_density_transform = None
-    population_density_crs = None
-    try:
-        population_density, population_density_transform, population_density_crs = _read_worldpop_density(
-            bbox_values=bbox_values,
-            output_path=population_density_path,
-        )
-    except Exception:
-        population_density = None
+    population_density_by_year: dict[int, tuple[np.ndarray, Affine, Any]] = {}
+    for population_year in population_years:
+        population_density_path = settings.context_temp_dir / f"{key}-population-density-{population_year}.tif"
+        try:
+            population_density_by_year[population_year] = _read_worldpop_density(
+                bbox_values=bbox_values,
+                output_path=population_density_path,
+                time_ms=population_year_time_ms(population_year),
+            )
+        except Exception:
+            continue
 
     road_lines = None
     try:
@@ -463,7 +506,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         dem_url=relative_dem_url,
         land_cover_url=relative_land_cover_url,
     )
-    dem_rows, land_cover_rows, urban_context_rows = _context_grid_statistics(
+    dem_rows, land_cover_rows, urban_context_rows, population_rows = _context_grid_statistics(
         area_geojson=area_geojson,
         dem=dem,
         dem_transform=dem_transform,
@@ -471,9 +514,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         land_cover=land_cover,
         land_cover_transform=land_cover_transform,
         land_cover_crs=land_cover_crs,
-        population_density=population_density,
-        population_density_transform=population_density_transform,
-        population_density_crs=population_density_crs,
+        population_density_by_year=population_density_by_year,
         road_lines=road_lines,
     )
     insert_context_statistics(
@@ -481,6 +522,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         dem_rows=dem_rows,
         land_cover_rows=land_cover_rows,
         urban_context_rows=urban_context_rows,
+        population_rows=population_rows,
     )
 
     return {
@@ -488,6 +530,8 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         "dem_statistics_count": len(dem_rows),
         "land_cover_statistics_count": len(land_cover_rows),
         "urban_context_statistics_count": len(urban_context_rows),
+        "population_statistics_count": len(population_rows),
+        "population_years": sorted(population_density_by_year),
         "bounds": [[south, west], [north, east]],
         "dem_url": relative_dem_url,
         "land_cover_url": relative_land_cover_url,

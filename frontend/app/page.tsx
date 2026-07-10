@@ -242,7 +242,9 @@ export default function MapPage() {
                     <span className={detailMetricLabelClass}>Population Trend</span>
                     <strong id="analysis-population" className={detailMetricValueClass}>0</strong>
                     <span id="analysis-population-note" className={detailMetricNoteClass}>No grid selected</span>
-                    <div id="analysis-population-chart" className="h-24 min-w-0" />
+                    <div className="h-32 min-w-0">
+                      <canvas id="analysis-population-chart" />
+                    </div>
                   </div>
                 </div>
               </section>
@@ -258,6 +260,10 @@ export default function MapPage() {
                       <strong id={valueId} className={detailMetricValueClass}>0</strong>
                       <span id={noteId} className={detailMetricNoteClass}>No grid selected</span>
                       {chartId === "analysis-ndvi-chart" ? (
+                        <div className="h-32 min-w-0">
+                          <canvas id={chartId} />
+                        </div>
+                      ) : chartId === "analysis-green-chart" ? (
                         <div className="h-32 min-w-0">
                           <canvas id={chartId} />
                         </div>
