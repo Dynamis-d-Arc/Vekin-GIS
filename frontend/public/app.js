@@ -22,6 +22,29 @@ function formatSquareKilometers(value) {
   return value === null || value === undefined ? "--" : (Number(value) / 1_000_000).toFixed(2);
 }
 
+function setText(id, value) {
+  const node = document.getElementById(id);
+  if (node) node.textContent = value;
+}
+
+function formatOptionalNumber(value, digits = 3) {
+  return value === null || value === undefined || !Number.isFinite(Number(value))
+    ? "0"
+    : Number(value).toFixed(digits);
+}
+
+function formatOptionalCompact(value) {
+  return value === null || value === undefined || !Number.isFinite(Number(value))
+    ? "0"
+    : formatCompactNumber(value);
+}
+
+function formatOptionalSquareKilometers(value) {
+  return value === null || value === undefined || !Number.isFinite(Number(value))
+    ? "0"
+    : formatSquareKilometers(value);
+}
+
 function averageFinite(values) {
   const finite = values.map(Number).filter(Number.isFinite);
   if (!finite.length) return null;
@@ -73,29 +96,29 @@ function renderStaticPreview() {
 
   document.getElementById("status").textContent =
     "Frontend preview is running. Start the backend to process live Sentinel-2 NDVI.";
-  document.getElementById("avg-ndvi").textContent = "0.421";
-  document.getElementById("min-ndvi").textContent = "0.118";
-  document.getElementById("max-ndvi").textContent = "0.714";
-  document.getElementById("change-ndvi").textContent = "+0.024";
+  document.getElementById("avg-ndvi").textContent = "0";
+  document.getElementById("min-ndvi").textContent = "0";
+  document.getElementById("max-ndvi").textContent = "0";
+  document.getElementById("change-ndvi").textContent = "0";
   document.getElementById("bbox-label").textContent = "Draw mode needs the live Leaflet map.";
   document.getElementById("apply-bounds-button").addEventListener("click", () => {
     document.getElementById("status").textContent = "Bounds paste needs the live Leaflet map.";
   });
   renderList("lowest", [
-    { grid_id: "BKK-00017", average_ndvi: 0.118 },
-    { grid_id: "BKK-00042", average_ndvi: 0.147 },
-    { grid_id: "BKK-00063", average_ndvi: 0.164 },
+    { grid_id: "0", average_ndvi: 0 },
+    { grid_id: "0", average_ndvi: 0 },
+    { grid_id: "0", average_ndvi: 0 },
   ]);
   renderList("highest", [
-    { grid_id: "BKK-00009", average_ndvi: 0.714 },
-    { grid_id: "BKK-00031", average_ndvi: 0.688 },
-    { grid_id: "BKK-00058", average_ndvi: 0.651 },
+    { grid_id: "0", average_ndvi: 0 },
+    { grid_id: "0", average_ndvi: 0 },
+    { grid_id: "0", average_ndvi: 0 },
   ]);
   renderTrend([
-    { date: "2026-06-01", average_ndvi: 0.35 },
-    { date: "2026-06-11", average_ndvi: 0.39 },
-    { date: "2026-06-21", average_ndvi: 0.43 },
-    { date: "2026-07-01", average_ndvi: 0.42 },
+    { date: "0", average_ndvi: 0 },
+    { date: "0", average_ndvi: 0 },
+    { date: "0", average_ndvi: 0 },
+    { date: "0", average_ndvi: 0 },
   ]);
 }
 
@@ -399,24 +422,69 @@ function renderUrbanContextValues({
 }) {
   document.getElementById("urban-context-title").textContent = title;
   document.getElementById("population-count").textContent =
-    populationCount !== null && populationCount !== undefined ? formatCompactNumber(populationCount) : "--";
+    formatOptionalCompact(populationCount);
   document.getElementById("built-up-area").textContent =
-    builtUpAreaSquareMeters !== null && builtUpAreaSquareMeters !== undefined ? formatSquareKilometers(builtUpAreaSquareMeters) : "--";
+    formatOptionalSquareKilometers(builtUpAreaSquareMeters);
   document.getElementById("green-cover").textContent =
-    greenCoverPercentage !== null && greenCoverPercentage !== undefined ? `${formatNumber(greenCoverPercentage)}%` : "--";
+    greenCoverPercentage !== null && greenCoverPercentage !== undefined ? `${formatNumber(greenCoverPercentage)}%` : "0";
   document.getElementById("road-density").textContent =
-    roadDensityKmPerSquareKm !== null && roadDensityKmPerSquareKm !== undefined ? formatNumber(roadDensityKmPerSquareKm) : "--";
+    formatOptionalNumber(roadDensityKmPerSquareKm);
+}
+
+function landCoverLabel(value) {
+  const labels = {
+    10: "Tree cover",
+    20: "Shrubland",
+    30: "Grassland",
+    40: "Cropland",
+    50: "Built-up",
+    60: "Bare / sparse",
+    70: "Snow / ice",
+    80: "Water",
+    90: "Wetland",
+    95: "Mangroves",
+    100: "Moss / lichen",
+  };
+  return labels[value] || (value === null || value === undefined ? "0" : `Class ${value}`);
+}
+
+function formatCoverMix(percentages = {}) {
+  const entries = Object.entries(percentages || {})
+    .map(([key, value]) => [Number(key), Number(value)])
+    .filter(([, value]) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4);
+  if (!entries.length) return "0";
+  return entries.map(([key, value]) => `${landCoverLabel(key)} ${value.toFixed(1)}%`).join(", ");
+}
+
+function renderGridDataValues(properties = {}) {
+  setText("grid-id", properties.grid_id || "0");
+  setText("grid-ndvi", formatOptionalNumber(properties.average_ndvi));
+  setText("grid-ndbi", formatOptionalNumber(properties.average_ndbi));
+  setText("grid-min", formatOptionalNumber(properties.minimum_ndvi));
+  setText("grid-max", formatOptionalNumber(properties.maximum_ndvi));
+  setText("grid-date", properties.capture_date ? new Date(properties.capture_date).toLocaleDateString() : "0");
+  setText("grid-population", formatOptionalCompact(properties.population_count));
+  setText("grid-built-up", formatOptionalSquareKilometers(properties.built_up_area_square_meters));
+  setText("grid-green", formatOptionalNumber(properties.green_cover_percentage));
+  setText("grid-road", formatOptionalNumber(properties.road_density_km_per_square_km));
+  setText("grid-elev-avg", formatOptionalNumber(properties.average_elevation));
+  setText("grid-elev-min", formatOptionalNumber(properties.minimum_elevation));
+  setText("grid-elev-max", formatOptionalNumber(properties.maximum_elevation));
+  setText("grid-land-cover", landCoverLabel(properties.dominant_land_cover_class));
+  setText("grid-cover-mix", formatCoverMix(properties.land_cover_percentages));
 }
 
 function renderSelectedGridInfo(feature) {
   const p = feature.properties;
-  document.getElementById("avg-ndvi").textContent = formatNumber(p.average_ndvi);
-  document.getElementById("min-ndvi").textContent = formatNumber(p.minimum_ndvi);
-  document.getElementById("max-ndvi").textContent = formatNumber(p.maximum_ndvi);
+  document.getElementById("avg-ndvi").textContent = formatOptionalNumber(p.average_ndvi);
+  document.getElementById("min-ndvi").textContent = formatOptionalNumber(p.minimum_ndvi);
+  document.getElementById("max-ndvi").textContent = formatOptionalNumber(p.maximum_ndvi);
   document.getElementById("change-label").textContent = "Date";
   document.getElementById("change-ndvi").textContent = p.capture_date
     ? new Date(p.capture_date).toLocaleDateString()
-    : "--";
+    : "0";
   renderUrbanContextValues({
     title: `Urban Context: ${p.grid_id}`,
     populationCount: p.population_count,
@@ -424,6 +492,7 @@ function renderSelectedGridInfo(feature) {
     greenCoverPercentage: p.green_cover_percentage,
     roadDensityKmPerSquareKm: p.road_density_km_per_square_km,
   });
+  renderGridDataValues(p);
 }
 
 function popupContent(p) {
@@ -562,6 +631,12 @@ async function loadGridLayer(captureDate = null) {
   }).addTo(map);
   selectedGridLayer = null;
   layerControl.addOverlay(overlays.Grids, "Grid / NDVI");
+  const representativeFeature =
+    grid.features.find((feature) => feature.properties?.average_ndvi !== null && feature.properties?.average_ndvi !== undefined)
+    || grid.features[0];
+  if (representativeFeature) {
+    renderGridDataValues(representativeFeature.properties);
+  }
 }
 
 function renderChangeDetectionLayer(change) {
@@ -610,15 +685,15 @@ function renderTrend(rows) {
 async function loadDashboard() {
   const dashboard = await fetchJson("/api/dashboard");
   document.getElementById("change-label").textContent = "Daily change";
-  document.getElementById("avg-ndvi").textContent = formatNumber(dashboard.summary.average_ndvi);
-  document.getElementById("min-ndvi").textContent = formatNumber(dashboard.summary.minimum_ndvi);
-  document.getElementById("max-ndvi").textContent = formatNumber(dashboard.summary.maximum_ndvi);
+  document.getElementById("avg-ndvi").textContent = formatOptionalNumber(dashboard.summary.average_ndvi);
+  document.getElementById("min-ndvi").textContent = formatOptionalNumber(dashboard.summary.minimum_ndvi);
+  document.getElementById("max-ndvi").textContent = formatOptionalNumber(dashboard.summary.maximum_ndvi);
   const trend = dashboard.trend || [];
   const previous = trend.at(-2)?.average_ndvi;
   const current = trend.at(-1)?.average_ndvi;
   const change = Number.isFinite(previous) && Number.isFinite(current) ? current - previous : null;
   document.getElementById("change-ndvi").textContent =
-    change === null ? "--" : `${change >= 0 ? "+" : ""}${formatNumber(change)}`;
+    change === null ? "0" : `${change >= 0 ? "+" : ""}${formatNumber(change)}`;
   renderList("lowest", dashboard.lowest);
   renderList("highest", dashboard.highest);
   renderTrend(trend);
