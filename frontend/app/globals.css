@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "flowbite-react/plugin/tailwindcss";
+@source "../.flowbite-react/class-list.json";
 @import "leaflet/dist/leaflet.css";
 
 :root {
@@ -202,6 +204,182 @@ select {
   gap: 16px;
 }
 
+.dashboard-shell {
+  background:
+    radial-gradient(circle at 9% -10%, rgba(37, 155, 142, 0.16), transparent 28%),
+    radial-gradient(circle at 92% 0%, rgba(39, 103, 150, 0.19), transparent 32%),
+    linear-gradient(145deg, #031521 0%, #061f31 48%, #03131e 100%);
+}
+
+.dashboard-topbar {
+  background: linear-gradient(105deg, rgba(7, 35, 52, 0.86), rgba(4, 24, 39, 0.78));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 14px 35px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(14px);
+}
+
+.brand-symbol {
+  position: relative;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+  color: #d9fff0;
+  background: linear-gradient(145deg, #1a9b78, #11648a);
+  border: 1px solid rgba(166, 255, 219, 0.28);
+  border-radius: 11px;
+  box-shadow: 0 8px 24px rgba(12, 128, 105, 0.22);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.brand-symbol::after {
+  position: absolute;
+  right: -8px;
+  bottom: -10px;
+  width: 30px;
+  height: 30px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  content: "";
+}
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  color: #9ce8c7;
+  background: rgba(34, 197, 139, 0.08);
+  border: 1px solid rgba(74, 222, 168, 0.16);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.live-badge i {
+  width: 5px;
+  height: 5px;
+  background: #4adea8;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(74, 222, 168, 0.1);
+}
+
+.kpi-premium {
+  background: linear-gradient(155deg, rgba(8, 43, 65, 0.92), rgba(3, 25, 40, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 12px 30px rgba(0, 0, 0, 0.13);
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.kpi-premium::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 42%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(56, 210, 165, 0.55));
+  content: "";
+}
+
+.kpi-premium:hover {
+  border-color: rgba(123, 229, 216, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 16px 34px rgba(0, 0, 0, 0.2);
+  transform: translateY(-1px);
+}
+
+.dashboard-panel {
+  border-color: rgba(136, 211, 219, 0.16);
+  border-radius: 12px;
+  background: linear-gradient(165deg, rgba(7, 40, 61, 0.93), rgba(3, 24, 39, 0.94));
+}
+
+.panel-eyebrow {
+  color: rgba(144, 206, 211, 0.52);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.context-pill {
+  padding: 4px 8px;
+  color: rgba(198, 237, 238, 0.72);
+  background: rgba(7, 24, 37, 0.55);
+  border: 1px solid rgba(133, 210, 217, 0.12);
+  border-radius: 999px;
+  font-size: 10px;
+}
+
+.flowbite-dashboard .flowbite-field input {
+  min-height: 36px;
+  color: #eaf8f9;
+  background: rgba(2, 18, 30, 0.72);
+  border-color: rgba(116, 210, 231, 0.2);
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+
+.flowbite-dashboard .flowbite-field input:hover {
+  border-color: rgba(116, 210, 231, 0.34);
+}
+
+.flowbite-dashboard .flowbite-field input:focus {
+  border-color: #35b98d;
+  box-shadow: 0 0 0 3px rgba(53, 185, 141, 0.13);
+}
+
+.flowbite-dashboard .flowbite-field input::placeholder {
+  color: rgba(161, 188, 194, 0.52);
+}
+
+.flowbite-dashboard label {
+  color: rgba(194, 230, 231, 0.72);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.flowbite-dashboard .fb-button {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.flowbite-dashboard .fb-button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(54, 205, 158, 0.18);
+}
+
+@media (max-width: 1180px) {
+  .dashboard-content-grid {
+    grid-template-columns: minmax(420px, 1.35fr) minmax(290px, 1fr);
+  }
+
+  .dashboard-content-grid .grid-details-panel,
+  .dashboard-content-grid .environment-panel {
+    grid-column: 2 / 3;
+  }
+}
+
+@media (max-width: 760px) {
+  .dashboard-content-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    min-height: auto;
+  }
+
+  .dashboard-content-grid #map-card,
+  .dashboard-content-grid .grid-details-panel,
+  .dashboard-content-grid .environment-panel {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .dashboard-content-grid #map-card {
+    min-height: 680px;
+  }
+}
+
 .dashboard-filter-bar .dashboard-status {
   margin: 0;
 }
@@ -241,7 +419,9 @@ select {
   line-height: 1.35;
 }
 
-button {
+.control-panel button,
+.dashboard button,
+.data-dashboard button {
   min-height: 42px;
   border: 0;
   border-radius: 6px;
@@ -251,38 +431,55 @@ button {
   cursor: pointer;
 }
 
-button:hover {
+.control-panel button:hover,
+.dashboard button:hover,
+.data-dashboard button:hover {
   background: var(--accent-strong);
 }
 
-button[type="button"] {
+.control-panel button[type="button"],
+.dashboard button[type="button"],
+.data-dashboard button[type="button"] {
   color: var(--accent-strong);
   background: #e7f1ec;
 }
 
-button[type="button"]:hover {
+.control-panel button[type="button"]:hover,
+.dashboard button[type="button"]:hover,
+.data-dashboard button[type="button"]:hover {
   background: #d7e8df;
 }
 
-button.is-active {
+.control-panel button.is-active,
+.dashboard button.is-active,
+.data-dashboard button.is-active {
   color: #fff;
   background: var(--warn);
 }
 
-button.is-active:hover {
+.control-panel button.is-active:hover,
+.dashboard button.is-active:hover,
+.data-dashboard button.is-active:hover {
   background: #954225;
 }
 
-button.danger-button {
+.control-panel button.danger-button,
+.dashboard button.danger-button,
+.data-dashboard button.danger-button {
   color: #ffffff;
   background: var(--warn);
 }
 
-button.danger-button:hover {
+.control-panel button.danger-button:hover,
+.dashboard button.danger-button:hover,
+.data-dashboard button.danger-button:hover {
   background: #954225;
 }
 
-button:disabled {
+.control-panel button:disabled,
+.dashboard button:disabled,
+.data-dashboard button:disabled,
+.flowbite-dashboard button:disabled {
   cursor: wait;
   opacity: 0.62;
 }
@@ -1081,16 +1278,109 @@ tr:last-child td {
   overflow: hidden;
 }
 
-#map-card.map-card-expanded #map {
-  height: calc(100% - 34px);
+.map-stage {
+  position: relative;
+  height: calc(100% - 43px);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(116, 210, 231, 0.22);
+  border-radius: 8px;
+  background: #071b28;
+  isolation: isolate;
+}
+
+#map-card.map-card-expanded .map-stage {
+  height: calc(100% - 43px);
+}
+
+.map-stage #map {
+  height: 100%;
 }
 
 #process-form.process-form-collapsed {
-  display: none;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(-14px, 0, 0) scale(0.975);
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 220ms;
 }
 
 .process-form-panel {
   grid-template-columns: minmax(0, 1fr);
+  isolation: isolate;
+  opacity: 1;
+  background:
+    linear-gradient(150deg, rgba(8, 38, 57, 0.94), rgba(3, 22, 36, 0.92));
+  box-shadow:
+    0 24px 55px rgba(0, 0, 0, 0.38),
+    0 4px 14px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px) saturate(130%);
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: top left;
+  transition: opacity 180ms ease, transform 240ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s;
+  will-change: transform, opacity;
+  scrollbar-color: rgba(113, 201, 200, 0.35) transparent;
+  scrollbar-width: thin;
+}
+
+.process-form-panel::before {
+  position: absolute;
+  top: 0;
+  left: 14px;
+  z-index: 2;
+  width: calc(100% - 28px);
+  height: 2px;
+  background: linear-gradient(90deg, #3bd1a0, rgba(68, 176, 211, 0.4), transparent 85%);
+  content: "";
+}
+
+.process-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid rgba(133, 210, 217, 0.12);
+}
+
+.process-form-header div {
+  display: grid;
+  gap: 2px;
+}
+
+.process-form-header span {
+  color: rgba(159, 211, 216, 0.52);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.process-form-header strong {
+  color: #f1ffff;
+  font-size: 14px;
+}
+
+.process-form-header button[type="button"] {
+  display: grid;
+  width: 28px;
+  min-height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  color: rgba(211, 242, 242, 0.68);
+  background: rgba(2, 15, 25, 0.45);
+  border: 1px solid rgba(133, 210, 217, 0.14);
+  border-radius: 7px;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.process-form-header button[type="button"]:hover {
+  color: #ffffff;
+  background: rgba(27, 112, 105, 0.6);
+  border-color: rgba(91, 226, 188, 0.3);
 }
 
 .selected-grid-tab-active {
@@ -1172,21 +1462,27 @@ tr:last-child td {
 @media (max-width: 760px) {
   #map-card {
     display: grid;
-    grid-template-rows: auto auto minmax(280px, 1fr);
+    grid-template-rows: auto minmax(420px, 1fr);
   }
 
   #map-card #map {
     height: 100%;
   }
 
+  #map-card .map-stage {
+    height: 100%;
+  }
+
   #process-form.process-form-panel {
-    position: static;
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    left: 12px;
     z-index: 430;
-    width: 100%;
-    max-height: min(42vh, 430px);
+    width: auto;
+    max-height: calc(100% - 72px);
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-self: start;
-    margin-bottom: 8px;
+    margin: 0;
   }
 
   #process-form.process-form-panel > label:first-child,
@@ -1200,11 +1496,16 @@ tr:last-child td {
     grid-column: 1 / -1;
   }
 
-  #map-card.map-card-expanded {
-    display: grid;
-    grid-template-rows: auto auto minmax(280px, 1fr);
+  #process-form.process-form-panel > .process-field-full {
+    grid-column: 1 / -1;
   }
 
+  #map-card.map-card-expanded {
+    display: grid;
+    grid-template-rows: auto minmax(280px, 1fr);
+  }
+
+  #map-card.map-card-expanded .map-stage,
   #map-card.map-card-expanded #map {
     height: 100%;
   }

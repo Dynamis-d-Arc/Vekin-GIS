@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ThemeInit } from "../.flowbite-react/init";
 
 export const metadata: Metadata = {
   title: {
@@ -13,8 +14,8 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" className="dark" suppressHydrationWarning>
+      <body><ThemeInit />{children}</body>
     </html>
   );
 }

@@ -175,6 +175,7 @@ function setupMapPanelControls(mapInstance) {
   const mapCard = document.getElementById("map-card");
   const processForm = document.getElementById("process-form");
   const formToggle = document.getElementById("toggle-process-form");
+  const formClose = document.getElementById("close-process-form");
   const fullscreenToggle = document.getElementById("toggle-map-fullscreen");
   if (!mapCard || !processForm || !formToggle || !fullscreenToggle) return;
 
@@ -191,11 +192,24 @@ function setupMapPanelControls(mapInstance) {
     }
   };
 
-  formToggle.addEventListener("click", () => {
-    const isCollapsed = processForm.classList.toggle("process-form-collapsed");
+  const setFormCollapsed = (isCollapsed, returnFocus = false) => {
+    processForm.classList.toggle("process-form-collapsed", isCollapsed);
+    processForm.setAttribute("aria-hidden", String(isCollapsed));
+    if (isCollapsed) {
+      processForm.setAttribute("inert", "");
+    } else {
+      processForm.removeAttribute("inert");
+    }
     setButtonContent(formToggle, isCollapsed ? "+" : "-", isCollapsed ? "Show form" : "Hide form");
     formToggle.setAttribute("aria-expanded", String(!isCollapsed));
+    if (returnFocus) formToggle.focus();
+  };
+
+  formToggle.addEventListener("click", () => {
+    setFormCollapsed(!processForm.classList.contains("process-form-collapsed"));
   });
+
+  formClose?.addEventListener("click", () => setFormCollapsed(true, true));
 
   fullscreenToggle.addEventListener("click", () => {
     const isExpanded = mapCard.classList.toggle("map-card-expanded");
@@ -205,6 +219,10 @@ function setupMapPanelControls(mapInstance) {
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !processForm.classList.contains("process-form-collapsed")) {
+      setFormCollapsed(true, true);
+      return;
+    }
     if (event.key !== "Escape" || !mapCard.classList.contains("map-card-expanded")) return;
     mapCard.classList.remove("map-card-expanded");
     setButtonContent(fullscreenToggle, "[]", "Fullscreen");
@@ -590,7 +608,6 @@ function renderUrbanContextValues({
   greenCoverPercentage = null,
   roadDensityKmPerSquareKm = null,
 }) {
-  document.getElementById("urban-context-title").textContent = title;
   document.getElementById("population-count").textContent =
     formatOptionalCompact(populationCount);
   document.getElementById("built-up-area").textContent =

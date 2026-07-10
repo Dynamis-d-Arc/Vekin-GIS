@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "chart.js": "^4.5.0",
+    "flowbite-react": "^0.12.17",
     "leaflet": "^1.9.4",
     "next": "^16.0.0",
     "react": "^19.2.0",
