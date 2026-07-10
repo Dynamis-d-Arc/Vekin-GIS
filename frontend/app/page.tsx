@@ -31,6 +31,10 @@ const cardClass =
   "min-w-0 overflow-hidden rounded-lg border border-cyan-200/25 bg-gradient-to-b from-sky-950/90 to-slate-950/90 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_12px_30px_rgba(0,0,0,0.18)]";
 const fieldClass =
   "grid min-h-14 min-w-0 content-start gap-1 rounded-md border border-cyan-200/15 bg-slate-950/60 p-2 text-xs text-cyan-100/70";
+const mapControlButtonClass =
+  "group inline-flex h-7 items-center gap-1 rounded border border-cyan-100/20 bg-cyan-950/55 px-2 text-[11px] font-bold text-cyan-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition hover:border-lime-200/45 hover:bg-emerald-700/90 focus:outline-none focus:ring-1 focus:ring-lime-200/60";
+const mapControlIconClass =
+  "grid h-4 w-4 place-items-center rounded-sm border border-cyan-100/15 bg-slate-950/45 text-[9px] leading-none text-lime-200 transition group-hover:border-lime-200/35";
 
 export default function MapPage() {
   return (
@@ -91,10 +95,32 @@ export default function MapPage() {
         </section>
 
         <section className="grid min-h-0 grid-cols-[minmax(480px,1.55fr)_minmax(260px,0.85fr)_minmax(260px,0.85fr)] grid-rows-[minmax(0,0.85fr)_minmax(0,1.25fr)_minmax(0,0.9fr)] gap-2">
-          <article className={`${cardClass} relative row-span-3`}>
+          <article id="map-card" className={`${cardClass} relative row-span-3`}>
             <div className="flex items-center justify-between gap-2.5">
               <h2 className="mb-2.5 text-[15px] font-bold text-cyan-50">Land Use / Land Cover</h2>
-              <span id="urban-context-title" className="text-xs text-cyan-100/65">Urban Context</span>
+              <div className="flex items-center gap-2">
+                <span id="urban-context-title" className="text-xs text-cyan-100/65">Urban Context</span>
+                <button
+                  id="toggle-process-form"
+                  type="button"
+                  aria-controls="process-form"
+                  aria-expanded="true"
+                  className={mapControlButtonClass}
+                >
+                  <span className={mapControlIconClass} aria-hidden="true">-</span>
+                  <span>Hide form</span>
+                </button>
+                <button
+                  id="toggle-map-fullscreen"
+                  type="button"
+                  aria-controls="map"
+                  aria-expanded="false"
+                  className={mapControlButtonClass}
+                >
+                  <span className={mapControlIconClass} aria-hidden="true">[]</span>
+                  <span>Fullscreen</span>
+                </button>
+              </div>
             </div>
 
             <form
@@ -137,7 +163,7 @@ export default function MapPage() {
                 Max cloud cover
                 <input className={inputClass} id="cloud" type="number" min="0" max="100" defaultValue="40" />
               </label>
-              <button className={buttonClass} type="submit">Process NDVI</button>
+              <button className={buttonClass} type="submit">Process Grid</button>
               <button className={secondaryButtonClass} id="change-detection-button" type="button">
                 Show Change Layer
               </button>

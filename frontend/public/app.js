@@ -75,9 +75,51 @@ function renderTrend(rows) {
   });
 }
 
+function setupMapPanelControls(mapInstance) {
+  const mapCard = document.getElementById("map-card");
+  const processForm = document.getElementById("process-form");
+  const formToggle = document.getElementById("toggle-process-form");
+  const fullscreenToggle = document.getElementById("toggle-map-fullscreen");
+  if (!mapCard || !processForm || !formToggle || !fullscreenToggle) return;
+
+  const setButtonContent = (button, icon, label) => {
+    button.innerHTML = `
+      <span class="grid h-4 w-4 place-items-center rounded-sm border border-cyan-100/15 bg-slate-950/45 text-[9px] leading-none text-lime-200 transition group-hover:border-lime-200/35" aria-hidden="true">${icon}</span>
+      <span>${label}</span>
+    `;
+  };
+
+  const refreshMapSize = () => {
+    if (mapInstance) {
+      window.setTimeout(() => mapInstance.invalidateSize(), 80);
+    }
+  };
+
+  formToggle.addEventListener("click", () => {
+    const isCollapsed = processForm.classList.toggle("process-form-collapsed");
+    setButtonContent(formToggle, isCollapsed ? "+" : "-", isCollapsed ? "Show form" : "Hide form");
+    formToggle.setAttribute("aria-expanded", String(!isCollapsed));
+  });
+
+  fullscreenToggle.addEventListener("click", () => {
+    const isExpanded = mapCard.classList.toggle("map-card-expanded");
+    setButtonContent(fullscreenToggle, isExpanded ? "x" : "[]", isExpanded ? "Exit" : "Fullscreen");
+    fullscreenToggle.setAttribute("aria-expanded", String(isExpanded));
+    refreshMapSize();
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !mapCard.classList.contains("map-card-expanded")) return;
+    mapCard.classList.remove("map-card-expanded");
+    setButtonContent(fullscreenToggle, "[]", "Fullscreen");
+    fullscreenToggle.setAttribute("aria-expanded", "false");
+    refreshMapSize();
+  });
+}
+
 function renderStaticPreview() {
   const mapNode = document.getElementById("map");
-  mapNode.className = "static-map";
+  mapNode.classList.add("static-map");
   mapNode.innerHTML = `
     <div class="static-road road-a"></div>
     <div class="static-road road-b"></div>
@@ -120,10 +162,12 @@ function renderStaticPreview() {
     { date: "0", average_ndvi: 0 },
     { date: "0", average_ndvi: 0 },
   ]);
+  setupMapPanelControls();
 }
 
 function bootLeafletPortal() {
 const map = L.map("map", { zoomControl: true }).fitBounds(bangkokBounds);
+setupMapPanelControls(map);
 map.createPane("contextPane");
 map.getPane("contextPane").style.zIndex = 350;
 map.createPane("ndviPane");
@@ -267,7 +311,7 @@ map.on("click", (event) => {
     return;
   }
 
-  const delta = 0.035;
+  const delta = 0.015;
   const bounds = [
     [event.latlng.lat - delta, event.latlng.lng - delta],
     [event.latlng.lat + delta, event.latlng.lng + delta],
@@ -860,8 +904,8 @@ document.getElementById("search-button").addEventListener("click", async () => {
       setSelectedBounds([[south, west], [north, east]], { fit: true });
     } else {
       setSelectedBounds([
-        [lat - 0.025, lon - 0.025],
-        [lat + 0.025, lon + 0.025],
+        [lat - 0.012, lon - 0.012],
+        [lat + 0.012, lon + 0.012],
       ], { fit: true });
     }
     setStatus(`Location selected: ${result.display_name || query}`);
