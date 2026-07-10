@@ -1,6 +1,6 @@
 import { ApiConfig } from "./api-config";
 import { MapRuntime } from "./map-runtime";
-const navItems = ["Overview", "Land Use", "Population", "Infrastructure", "Environment", "Alerts", "Reports"];
+const navItems = ["Overview", "Land Use", "Population", "Environment", "Reports"];
 
 export default function MapPage() {
   return (
@@ -96,12 +96,6 @@ export default function MapPage() {
             <strong><span id="road-density">0</span> km/km<sup>2</sup></strong>
             <em>0% vs last year</em>
           </div>
-          <div className="urban-kpi alert-kpi">
-            <span className="kpi-icon warning">ALT</span>
-            <small>Active Alerts</small>
-            <strong>0</strong>
-            <em>View details</em>
-          </div>
         </section>
 
         <section className="urban-grid">
@@ -153,25 +147,6 @@ export default function MapPage() {
             </div>
           </article>
 
-          <article className="urban-card infrastructure-card">
-            <h2>Infrastructure Status</h2>
-            <div className="donut-chart" />
-            <div className="status-legend">
-              <span><i className="good" />Good <strong>0%</strong></span>
-              <span><i className="fair" />Fair <strong>0%</strong></span>
-              <span><i className="poor" />Poor <strong>0%</strong></span>
-            </div>
-          </article>
-
-          <article className="urban-card road-card">
-            <h2>Road Network</h2>
-            <div className="road-preview">
-              <span className="road highway" />
-              <span className="road major" />
-              <span className="road minor" />
-            </div>
-          </article>
-
           <article className="urban-card environmental-card">
             <h2>Environmental Indicators</h2>
             <div className="environment-grid">
@@ -179,15 +154,6 @@ export default function MapPage() {
               <div><span>Minimum NDVI</span><strong id="min-ndvi">0</strong><em>placeholder</em></div>
               <div><span>Maximum NDVI</span><strong id="max-ndvi">0</strong><em>placeholder</em></div>
               <div><span id="change-label">Daily change</span><strong id="change-ndvi">0</strong><em>placeholder</em></div>
-            </div>
-          </article>
-
-          <article className="urban-card alerts-card">
-            <h2>Recent Alerts</h2>
-            <div className="alert-list">
-              <p><strong>0</strong><span>0</span></p>
-              <p><strong>0</strong><span>0</span></p>
-              <p><strong>0</strong><span>0</span></p>
             </div>
           </article>
         </section>
