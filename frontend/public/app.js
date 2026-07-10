@@ -834,21 +834,37 @@ document.getElementById("search-button").addEventListener("click", async () => {
   resetDrawMode();
   setStatus("Searching location...");
   try {
-    const url = new URL("https://nominatim.openstreetmap.org/search");
-    url.searchParams.set("format", "json");
-    url.searchParams.set("limit", "1");
-    url.searchParams.set("q", `${query}, Bangkok, Thailand`);
-    const response = await fetch(url);
-    const results = await response.json();
+    const searchLocation = async (value) => {
+      const url = new URL("https://nominatim.openstreetmap.org/search");
+      url.searchParams.set("format", "json");
+      url.searchParams.set("limit", "1");
+      url.searchParams.set("countrycodes", "th");
+      url.searchParams.set("q", value);
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Location search service unavailable.");
+      return response.json();
+    };
+
+    let results = await searchLocation(`${query}, Thailand`);
+    if (!results.length) {
+      results = await searchLocation(query);
+    }
     if (!results.length) throw new Error("No matching location found.");
-    const lat = Number(results[0].lat);
-    const lon = Number(results[0].lon);
-    map.setView([lat, lon], 14);
-    setSelectedBounds([
-      [lat - 0.025, lon - 0.025],
-      [lat + 0.025, lon + 0.025],
-    ]);
-    setStatus("Location selected.");
+    const result = results[0];
+    const lat = Number(result.lat);
+    const lon = Number(result.lon);
+    const bbox = result.boundingbox?.map(Number);
+
+    if (bbox?.length === 4 && bbox.every(Number.isFinite)) {
+      const [south, north, west, east] = bbox;
+      setSelectedBounds([[south, west], [north, east]], { fit: true });
+    } else {
+      setSelectedBounds([
+        [lat - 0.025, lon - 0.025],
+        [lat + 0.025, lon + 0.025],
+      ], { fit: true });
+    }
+    setStatus(`Location selected: ${result.display_name || query}`);
   } catch (error) {
     setStatus(`Search failed: ${error.message}`);
   }
