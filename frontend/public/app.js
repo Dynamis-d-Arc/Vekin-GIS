@@ -1,4 +1,17 @@
 const API_BASE = window.VEKIN_API_BASE || "http://localhost:8000";
+const dateRangeStorageKey = "vekin-date-range";
+const detailCharts = {};
+const detailChartPalette = {
+  green: "#1b7f5a",
+  lightGreen: "#77a95d",
+  yellow: "#d8c64b",
+  amber: "#d99441",
+  red: "#b8542f",
+  blue: "#3b6f8f",
+  slate: "#5f6f69",
+  ink: "#dff7f5",
+  muted: "#9fc7c8",
+};
 const bangkokBounds = [
   [13.494, 100.327],
   [13.955, 100.938],
@@ -27,6 +40,76 @@ function setText(id, value) {
   if (node) node.textContent = value;
 }
 
+function formatDateInputValue(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function formatShortDate(value) {
+  if (!value) return "0";
+  const date = typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)
+    ? new Date(`${value.slice(0, 10)}T00:00:00`)
+    : new Date(value);
+  if (Number.isNaN(date.getTime())) return "0";
+  return date.toLocaleDateString(undefined, {
+    month: "2-digit",
+    day: "2-digit",
+    year: "2-digit",
+  });
+}
+
+function getDefaultDateRange() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 30);
+  return {
+    startDate: formatDateInputValue(start),
+    endDate: formatDateInputValue(end),
+  };
+}
+
+function readStoredDateRange() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(dateRangeStorageKey) || "null");
+    if (parsed?.startDate && parsed?.endDate) return parsed;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getActiveDateRange() {
+  return {
+    startDate: document.getElementById("date").value,
+    endDate: document.getElementById("end-date").value,
+  };
+}
+
+function syncDateRangeControls(range = getActiveDateRange()) {
+  const rangeStart = document.getElementById("map-range-start");
+  const rangeEnd = document.getElementById("map-range-end");
+  if (rangeStart) rangeStart.value = range.startDate;
+  if (rangeEnd) rangeEnd.value = range.endDate;
+}
+
+function setActiveDateRange(range) {
+  document.getElementById("date").value = range.startDate;
+  document.getElementById("end-date").value = range.endDate;
+  syncDateRangeControls(range);
+  saveActiveDateRange();
+}
+
+function saveActiveDateRange() {
+  const range = getActiveDateRange();
+  window.localStorage.setItem(dateRangeStorageKey, JSON.stringify(range));
+  return range;
+}
+
+function appendDateRangeParams(params, range = getActiveDateRange()) {
+  if (range.startDate) params.set("start_date", range.startDate);
+  if (range.endDate) params.set("end_date", range.endDate);
+  return params;
+}
+
 function formatOptionalNumber(value, digits = 3) {
   return value === null || value === undefined || !Number.isFinite(Number(value))
     ? "0"
@@ -45,10 +128,23 @@ function formatOptionalSquareKilometers(value) {
     : formatSquareKilometers(value);
 }
 
+function formatOptionalPercent(value) {
+  return value === null || value === undefined || !Number.isFinite(Number(value))
+    ? "0"
+    : `${formatNumber(value)}%`;
+}
+
 function averageFinite(values) {
   const finite = values.map(Number).filter(Number.isFinite);
   if (!finite.length) return null;
   return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
+function sumFinite(values) {
+  return values
+    .map(Number)
+    .filter(Number.isFinite)
+    .reduce((sum, value) => sum + value, 0);
 }
 
 function renderList(id, rows) {
@@ -117,6 +213,29 @@ function setupMapPanelControls(mapInstance) {
   });
 }
 
+function setupSelectedGridDetailTabs() {
+  const tabs = Array.from(document.querySelectorAll("[data-grid-detail-tab]"));
+  const panels = Array.from(document.querySelectorAll("[data-grid-detail-panel]"));
+  if (!tabs.length || !panels.length) return;
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const selected = tab.dataset.gridDetailTab;
+      tabs.forEach((candidate) => {
+        const isActive = candidate === tab;
+        candidate.classList.toggle("selected-grid-tab-active", isActive);
+        candidate.setAttribute("aria-selected", String(isActive));
+      });
+      panels.forEach((panel) => {
+        panel.classList.toggle("hidden", panel.dataset.gridDetailPanel !== selected);
+      });
+      requestAnimationFrame(() => {
+        Object.values(detailCharts).forEach((chart) => chart.resize());
+      });
+    });
+  });
+}
+
 function renderStaticPreview() {
   const mapNode = document.getElementById("map");
   mapNode.classList.add("static-map");
@@ -163,11 +282,13 @@ function renderStaticPreview() {
     { date: "0", average_ndvi: 0 },
   ]);
   setupMapPanelControls();
+  setupSelectedGridDetailTabs();
 }
 
 function bootLeafletPortal() {
 const map = L.map("map", { zoomControl: true }).fitBounds(bangkokBounds);
 setupMapPanelControls(map);
+setupSelectedGridDetailTabs();
 map.createPane("contextPane");
 map.getPane("contextPane").style.zIndex = 350;
 map.createPane("ndviPane");
@@ -205,6 +326,9 @@ let previewArea = null;
 let selectedGridLayer = null;
 let changeDetectionLayer = null;
 let gridLayerRequestId = 0;
+let selectedGridTrendRequestId = 0;
+let currentGridFeatures = [];
+let selectedGridTrendRows = [];
 const drawButton = document.getElementById("draw-box-button");
 const bboxLabel = document.getElementById("bbox-label");
 
@@ -475,6 +599,30 @@ function renderUrbanContextValues({
     formatOptionalNumber(roadDensityKmPerSquareKm);
 }
 
+function renderUrbanContextFromFeatures(features = []) {
+  const rows = features
+    .map((feature) => feature.properties || {})
+    .filter((row) => row.capture_date);
+  const populationTotal = rows
+    .map((row) => Number(row.population_count))
+    .filter(Number.isFinite)
+    .reduce((sum, value) => sum + value, 0);
+  const builtUpTotal = rows
+    .map((row) => Number(row.built_up_area_square_meters))
+    .filter(Number.isFinite)
+    .reduce((sum, value) => sum + value, 0);
+  const greenAverage = averageFinite(rows.map((row) => row.green_cover_percentage));
+  const roadDensityAverage = averageFinite(rows.map((row) => row.road_density_km_per_square_km));
+
+  renderUrbanContextValues({
+    title: "Urban Context",
+    populationCount: populationTotal > 0 ? populationTotal : null,
+    builtUpAreaSquareMeters: builtUpTotal > 0 ? builtUpTotal : null,
+    greenCoverPercentage: greenAverage,
+    roadDensityKmPerSquareKm: roadDensityAverage,
+  });
+}
+
 function landCoverLabel(value) {
   const labels = {
     10: "Tree cover",
@@ -502,13 +650,310 @@ function formatCoverMix(percentages = {}) {
   return entries.map(([key, value]) => `${landCoverLabel(key)} ${value.toFixed(1)}%`).join(", ");
 }
 
-function renderGridDataValues(properties = {}) {
+function formatGridDateRange(properties = {}) {
+  const range = getActiveDateRange();
+  const startDate = range.startDate || properties.capture_date;
+  const endDate = range.endDate || properties.capture_date;
+  if (!startDate && !endDate) return "0";
+  return `${formatShortDate(startDate)} - ${formatShortDate(endDate)}`;
+}
+
+function visibleGridRows() {
+  return currentGridFeatures
+    .map((feature) => feature.properties || {})
+    .filter((row) => row.capture_date);
+}
+
+function comparisonNote(value, baseline, label = "displayed grid average") {
+  const current = Number(value);
+  const comparison = Number(baseline);
+  if (!Number.isFinite(current) || !Number.isFinite(comparison)) return `No ${label} available`;
+  const delta = current - comparison;
+  if (Math.abs(delta) < 0.0005) return `In line with ${label}`;
+  return `${delta > 0 ? "+" : ""}${formatNumber(delta)} vs ${label}`;
+}
+
+function shareNote(value, total, label = "displayed total") {
+  const current = Number(value);
+  const sum = Number(total);
+  if (!Number.isFinite(current) || !Number.isFinite(sum) || sum <= 0) return `No ${label} available`;
+  return `${((current / sum) * 100).toFixed(1)}% of ${label}`;
+}
+
+function clearMiniChart(id, message = "No chart data") {
+  const node = document.getElementById(id);
+  if (!node) return;
+  node.innerHTML = `<div class="grid h-full place-items-center text-[11px] font-bold text-cyan-100/45">${message}</div>`;
+}
+
+function detailChartBaseOptions(extra = {}) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      intersect: false,
+      mode: "index",
+    },
+    plugins: {
+      legend: {
+        labels: {
+          color: detailChartPalette.ink,
+          boxWidth: 10,
+          boxHeight: 10,
+          usePointStyle: true,
+        },
+      },
+      tooltip: {
+        backgroundColor: "#1a2521",
+        titleColor: "#ffffff",
+        bodyColor: "#ffffff",
+        padding: 10,
+      },
+    },
+    scales: {
+      x: {
+        ticks: { color: detailChartPalette.muted, maxRotation: 0 },
+        grid: { display: false },
+      },
+      y: {
+        beginAtZero: true,
+        ticks: { color: detailChartPalette.muted },
+        grid: { color: "rgba(159, 199, 200, 0.18)" },
+      },
+    },
+    ...extra,
+  };
+}
+
+function renderDetailChart(id, config) {
+  const node = document.getElementById(id);
+  if (!node || typeof Chart === "undefined") return;
+  if (detailCharts[id]) detailCharts[id].destroy();
+  try {
+    detailCharts[id] = new Chart(node, config);
+  } catch (error) {
+    console.error(`Unable to render ${id}`, error);
+  }
+}
+
+function renderDetailNdviTrendChart(rows) {
+  const points = rows
+    .map((row) => ({
+      label: row.date,
+      value: Number(row.average_ndvi),
+    }))
+    .filter((row) => Number.isFinite(row.value));
+
+  renderDetailChart("analysis-ndvi-chart", {
+    type: "line",
+    data: {
+      labels: points.map((point) => point.label),
+      datasets: [
+        {
+          label: "Average NDVI",
+          data: points.map((point) => point.value),
+          borderColor: detailChartPalette.green,
+          backgroundColor: "rgba(27, 127, 90, 0.2)",
+          fill: true,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          tension: 0.32,
+        },
+      ],
+    },
+    options: detailChartBaseOptions(),
+  });
+}
+
+function renderDetailLandCoverChart(percentages = {}) {
+  const entries = Object.entries(percentages || {})
+    .map(([code, percent]) => [code, Number(percent)])
+    .filter(([, value]) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 7);
+
+  renderDetailChart("analysis-land-cover-chart", {
+    type: "doughnut",
+    data: {
+      labels: entries.map(([code]) => landCoverLabel(Number(code))),
+      datasets: [
+        {
+          data: entries.map(([, value]) => value),
+          backgroundColor: [
+            detailChartPalette.green,
+            detailChartPalette.lightGreen,
+            detailChartPalette.yellow,
+            detailChartPalette.amber,
+            detailChartPalette.red,
+            detailChartPalette.blue,
+            detailChartPalette.slate,
+          ],
+          borderColor: "#031927",
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: detailChartBaseOptions({
+      cutout: "62%",
+      scales: {},
+      plugins: {
+        ...detailChartBaseOptions().plugins,
+        legend: {
+          position: "bottom",
+          labels: {
+            color: detailChartPalette.ink,
+            boxWidth: 10,
+            boxHeight: 10,
+            usePointStyle: true,
+          },
+        },
+      },
+    }),
+  });
+}
+
+function renderMiniLineChart(id, rows, valueKey, color = "#a3e635") {
+  const node = document.getElementById(id);
+  if (!node) return;
+  const points = rows
+    .map((row) => ({
+      label: row.date || "",
+      value: Number(row[valueKey]),
+    }))
+    .filter((point) => Number.isFinite(point.value));
+  if (points.length < 2) {
+    clearMiniChart(id, points.length ? "Need another capture date" : "No trend data");
+    return;
+  }
+
+  const width = 260;
+  const height = 76;
+  const padding = 10;
+  const values = points.map((point) => point.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const step = (width - padding * 2) / Math.max(points.length - 1, 1);
+  const coordinates = points.map((point, index) => {
+    const x = padding + index * step;
+    const y = height - padding - ((point.value - min) / span) * (height - padding * 2);
+    return { ...point, x, y };
+  });
+  const path = coordinates
+    .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
+    .join(" ");
+  const area = `${path} L${coordinates.at(-1).x.toFixed(1)} ${height - padding} L${padding} ${height - padding} Z`;
+  const circles = coordinates
+    .map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.3"><title>${point.label}: ${formatNumber(point.value)}</title></circle>`)
+    .join("");
+
+  node.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Trend chart" class="h-full w-full overflow-visible">
+      <path d="${area}" fill="${color}" opacity="0.14"></path>
+      <path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+      <g fill="${color}">${circles}</g>
+    </svg>
+  `;
+}
+
+function renderMiniComparisonChart(id, selectedValue, baselineValue, options = {}) {
+  const node = document.getElementById(id);
+  if (!node) return;
+  const selected = Number(selectedValue);
+  const baseline = Number(baselineValue);
+  if (!Number.isFinite(selected) && !Number.isFinite(baseline)) {
+    clearMiniChart(id, "No comparison data");
+    return;
+  }
+  const max = Math.max(Math.abs(selected) || 0, Math.abs(baseline) || 0, 0.1);
+  const selectedWidth = Math.max(4, (Math.abs(selected) / max) * 100);
+  const baselineWidth = Math.max(4, (Math.abs(baseline) / max) * 100);
+  const selectedLabel = options.selectedLabel || "Selected";
+  const baselineLabel = options.baselineLabel || "Displayed avg";
+  const formatter = options.formatter || formatOptionalNumber;
+  node.innerHTML = `
+    <div class="grid h-full content-center gap-2 text-[11px] text-cyan-100/70">
+      <div class="grid grid-cols-[70px_1fr_auto] items-center gap-2">
+        <span>${selectedLabel}</span>
+        <span class="h-2 overflow-hidden rounded bg-slate-800">
+          <span class="block h-full rounded bg-lime-300" style="width:${selectedWidth}%"></span>
+        </span>
+        <strong class="text-cyan-50">${formatter(selected)}</strong>
+      </div>
+      <div class="grid grid-cols-[70px_1fr_auto] items-center gap-2">
+        <span>${baselineLabel}</span>
+        <span class="h-2 overflow-hidden rounded bg-slate-800">
+          <span class="block h-full rounded bg-cyan-300" style="width:${baselineWidth}%"></span>
+        </span>
+        <strong class="text-cyan-50">${formatter(baseline)}</strong>
+      </div>
+    </div>
+  `;
+}
+
+function renderSelectedGridAnalysis(properties = {}, trendRows = selectedGridTrendRows) {
+  const rows = visibleGridRows();
+  const ndbiAverage = averageFinite(rows.map((row) => row.average_ndbi));
+  const builtUpTotal = sumFinite(rows.map((row) => row.built_up_area_square_meters));
+  const roadAverage = averageFinite(rows.map((row) => row.road_density_km_per_square_km));
+  const populationTotal = sumFinite(rows.map((row) => row.population_count));
+  const ndviAverage = averageFinite(rows.map((row) => row.average_ndvi));
+  const greenAverage = averageFinite(rows.map((row) => row.green_cover_percentage));
+  const dateRange = formatGridDateRange(properties);
+
+  setText("analysis-ndbi", formatOptionalNumber(properties.average_ndbi));
+  setText("analysis-ndbi-note", comparisonNote(properties.average_ndbi, ndbiAverage));
+  setText("analysis-land-cover", landCoverLabel(properties.dominant_land_cover_class));
+  setText("analysis-land-cover-note", formatCoverMix(properties.land_cover_percentages));
+  setText("analysis-built-up", `${formatOptionalSquareKilometers(properties.built_up_area_square_meters)} km2`);
+  setText("analysis-built-up-note", shareNote(properties.built_up_area_square_meters, builtUpTotal));
+  setText("analysis-road", `${formatOptionalNumber(properties.road_density_km_per_square_km)} km/km2`);
+  setText("analysis-road-note", comparisonNote(properties.road_density_km_per_square_km, roadAverage));
+  setText("analysis-elev-avg", `${formatOptionalNumber(properties.average_elevation)} m`);
+  setText("analysis-elev-avg-note", `DEM context for ${dateRange}`);
+  setText("analysis-elev-min", `${formatOptionalNumber(properties.minimum_elevation)} m`);
+  setText("analysis-elev-min-note", "Lowest sampled elevation in this grid");
+  setText("analysis-elev-max", `${formatOptionalNumber(properties.maximum_elevation)} m`);
+  setText("analysis-elev-max-note", "Highest sampled elevation in this grid");
+  setText("analysis-population", formatOptionalCompact(properties.population_count));
+  setText("analysis-population-note", shareNote(properties.population_count, populationTotal));
+  setText("analysis-ndvi", formatOptionalNumber(properties.average_ndvi));
+  setText("analysis-ndvi-note", comparisonNote(properties.average_ndvi, ndviAverage));
+  setText("analysis-green", formatOptionalPercent(properties.green_cover_percentage));
+  setText("analysis-green-note", comparisonNote(properties.green_cover_percentage, greenAverage));
+  renderMiniLineChart("analysis-ndbi-chart", trendRows, "average_ndbi", "#67e8f9");
+  renderDetailNdviTrendChart(trendRows);
+  renderDetailLandCoverChart(properties.land_cover_percentages);
+  renderMiniComparisonChart("analysis-built-up-chart", properties.built_up_area_square_meters, builtUpTotal / Math.max(rows.length, 1), {
+    formatter: formatOptionalSquareKilometers,
+  });
+  renderMiniComparisonChart("analysis-road-chart", properties.road_density_km_per_square_km, roadAverage, {
+    formatter: (value) => formatOptionalNumber(value),
+  });
+  renderMiniComparisonChart("analysis-population-chart", properties.population_count, populationTotal / Math.max(rows.length, 1), {
+    formatter: formatOptionalCompact,
+  });
+  renderMiniComparisonChart("analysis-green-chart", properties.green_cover_percentage, greenAverage, {
+    formatter: formatOptionalPercent,
+  });
+  renderMiniComparisonChart("analysis-elev-avg-chart", properties.average_elevation, averageFinite(rows.map((row) => row.average_elevation)), {
+    formatter: (value) => `${formatOptionalNumber(value)} m`,
+  });
+  renderMiniComparisonChart("analysis-elev-min-chart", properties.minimum_elevation, averageFinite(rows.map((row) => row.minimum_elevation)), {
+    formatter: (value) => `${formatOptionalNumber(value)} m`,
+  });
+  renderMiniComparisonChart("analysis-elev-max-chart", properties.maximum_elevation, averageFinite(rows.map((row) => row.maximum_elevation)), {
+    formatter: (value) => `${formatOptionalNumber(value)} m`,
+  });
+}
+
+function renderGridDataValues(properties = {}, trendRows = selectedGridTrendRows) {
   setText("grid-id", properties.grid_id || "0");
   setText("grid-ndvi", formatOptionalNumber(properties.average_ndvi));
   setText("grid-ndbi", formatOptionalNumber(properties.average_ndbi));
   setText("grid-min", formatOptionalNumber(properties.minimum_ndvi));
   setText("grid-max", formatOptionalNumber(properties.maximum_ndvi));
-  setText("grid-date", properties.capture_date ? new Date(properties.capture_date).toLocaleDateString() : "0");
+  setText("grid-date", formatGridDateRange(properties));
   setText("grid-population", formatOptionalCompact(properties.population_count));
   setText("grid-built-up", formatOptionalSquareKilometers(properties.built_up_area_square_meters));
   setText("grid-green", formatOptionalNumber(properties.green_cover_percentage));
@@ -518,6 +963,7 @@ function renderGridDataValues(properties = {}) {
   setText("grid-elev-max", formatOptionalNumber(properties.maximum_elevation));
   setText("grid-land-cover", landCoverLabel(properties.dominant_land_cover_class));
   setText("grid-cover-mix", formatCoverMix(properties.land_cover_percentages));
+  renderSelectedGridAnalysis(properties, trendRows);
 }
 
 function renderSelectedGridInfo(feature) {
@@ -537,6 +983,15 @@ function renderSelectedGridInfo(feature) {
     roadDensityKmPerSquareKm: p.road_density_km_per_square_km,
   });
   renderGridDataValues(p);
+}
+
+async function loadSelectedGridTrend(gridId, properties) {
+  const requestId = ++selectedGridTrendRequestId;
+  const params = appendDateRangeParams(new URLSearchParams([["grid_id", gridId]]));
+  const dashboard = await fetchJson(`/api/dashboard?${params.toString()}`);
+  if (requestId !== selectedGridTrendRequestId) return;
+  selectedGridTrendRows = dashboard.trend || [];
+  renderSelectedGridAnalysis(properties, selectedGridTrendRows);
 }
 
 function popupContent(p) {
@@ -573,6 +1028,9 @@ function selectGridFeature(feature, layer) {
   layer.bringToFront();
   setSelectedBounds(layer.getBounds());
   renderSelectedGridInfo(feature);
+  loadSelectedGridTrend(feature.properties.grid_id, feature.properties).catch((error) => {
+    setStatus(`Selected ${feature.properties.grid_id}, but trend charts failed: ${error.message}`);
+  });
   setStatus(`Selected ${feature.properties.grid_id}. Map and metrics now show this grid cell.`);
 }
 
@@ -651,9 +1109,17 @@ function toGridCaptureParam(value) {
 
 async function loadGridLayer(captureDate = null) {
   const requestId = ++gridLayerRequestId;
-  const path = captureDate ? `/api/grids?capture_date=${encodeURIComponent(toGridCaptureParam(captureDate))}` : "/api/grids";
+  let path = "/api/grids";
+  if (captureDate) {
+    path = `/api/grids?capture_date=${encodeURIComponent(toGridCaptureParam(captureDate))}`;
+  } else {
+    const params = appendDateRangeParams(new URLSearchParams());
+    path = `/api/grids?${params.toString()}`;
+  }
   const grid = await fetchJson(path);
   if (requestId !== gridLayerRequestId) return;
+  currentGridFeatures = grid.features || [];
+  selectedGridTrendRows = [];
   if (overlays.Grids) {
     map.removeLayer(overlays.Grids);
     layerControl.removeLayer(overlays.Grids);
@@ -678,8 +1144,14 @@ async function loadGridLayer(captureDate = null) {
   const representativeFeature =
     grid.features.find((feature) => feature.properties?.average_ndvi !== null && feature.properties?.average_ndvi !== undefined)
     || grid.features[0];
+  renderUrbanContextFromFeatures(currentGridFeatures);
   if (representativeFeature) {
     renderGridDataValues(representativeFeature.properties);
+    loadSelectedGridTrend(representativeFeature.properties.grid_id, representativeFeature.properties).catch((error) => {
+      setStatus(`Grid trend refresh failed: ${error.message}`);
+    });
+  } else {
+    renderGridDataValues();
   }
 }
 
@@ -727,7 +1199,8 @@ function renderTrend(rows) {
 }
 
 async function loadDashboard() {
-  const dashboard = await fetchJson("/api/dashboard");
+  const params = appendDateRangeParams(new URLSearchParams());
+  const dashboard = await fetchJson(`/api/dashboard?${params.toString()}`);
   document.getElementById("change-label").textContent = "Daily change";
   document.getElementById("avg-ndvi").textContent = formatOptionalNumber(dashboard.summary.average_ndvi);
   document.getElementById("min-ndvi").textContent = formatOptionalNumber(dashboard.summary.minimum_ndvi);
@@ -744,7 +1217,8 @@ async function loadDashboard() {
 }
 
 async function loadMetadata() {
-  const rows = await fetchJson("/api/metadata");
+  const params = appendDateRangeParams(new URLSearchParams([["limit", "50"]]));
+  const rows = await fetchJson(`/api/metadata?${params.toString()}`);
   const node = document.getElementById("metadata");
   node.innerHTML = "";
   rows.slice(0, 8).forEach((row) => {
@@ -757,6 +1231,10 @@ async function loadMetadata() {
     `;
     node.appendChild(item);
   });
+}
+
+function refreshRangeFilteredMapData() {
+  return Promise.all([loadGridLayer(), loadDashboard(), loadMetadata()]);
 }
 
 async function loadUrbanContext() {
@@ -792,6 +1270,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
     setStatus("Processing failed: start date must be before or equal to end date.");
     return;
   }
+  saveActiveDateRange();
   const selectedBounds = getSelectedBounds();
   if (!selectedBounds) {
     setStatus("Choose an area first by clicking the map, drawing a box, searching, or pasting bounds.");
@@ -822,7 +1301,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       .then(() => true)
       .catch(() => false);
     const displayCaptureDate = result.results.at(-1)?.capture_date;
-    await Promise.all([loadGridLayer(displayCaptureDate), loadDashboard(), loadMetadata(), loadUrbanContext()]);
+    await Promise.all([loadGridLayer(displayCaptureDate), loadDashboard(), loadMetadata()]);
     const contextFailed = !contextSucceeded;
     const suffix = contextFailed ? " DEM/land-cover context was not available for this area." : "";
     const completion = isRange
@@ -846,6 +1325,7 @@ document.getElementById("change-detection-button").addEventListener("click", asy
     setStatus("Change detection needs a before date earlier than the after date.");
     return;
   }
+  saveActiveDateRange();
   const selectedBounds = getSelectedBounds();
   if (!selectedBounds) {
     setStatus("Choose an area first by clicking the map, drawing a box, searching, or pasting bounds.");
@@ -914,22 +1394,45 @@ document.getElementById("search-button").addEventListener("click", async () => {
   }
 });
 
-const defaultDate = new Date();
-defaultDate.setDate(defaultDate.getDate() - 30);
-document.getElementById("date").valueAsDate = defaultDate;
-document.getElementById("end-date").valueAsDate = defaultDate;
+const initialDateRange = readStoredDateRange() || getDefaultDateRange();
+setActiveDateRange(initialDateRange);
 updateBboxReadout();
+document.getElementById("apply-map-date-range").addEventListener("click", () => {
+  const range = {
+    startDate: document.getElementById("map-range-start").value,
+    endDate: document.getElementById("map-range-end").value,
+  };
+  if (!range.startDate || !range.endDate) {
+    setStatus("Choose both start and end dates.");
+    return;
+  }
+  if (range.startDate > range.endDate) {
+    setStatus("Date range failed: start date must be before or equal to end date.");
+    return;
+  }
+  setActiveDateRange(range);
+  setStatus("Applying date range to map and dashboard data...");
+  refreshRangeFilteredMapData()
+    .then(() => setStatus(`Showing processed grid data from ${range.startDate} to ${range.endDate}.`))
+    .catch((error) => {
+      setStatus(`Date range refresh failed: ${error.message}`);
+    });
+});
 document.getElementById("date").addEventListener("change", () => {
-  loadGridLayer(getSelectedDate()).catch((error) => {
-    setStatus(`Grid refresh failed: ${error.message}`);
+  syncDateRangeControls();
+  saveActiveDateRange();
+  refreshRangeFilteredMapData().catch((error) => {
+    setStatus(`Date range refresh failed: ${error.message}`);
   });
 });
 document.getElementById("end-date").addEventListener("change", () => {
-  loadGridLayer(document.getElementById("end-date").value).catch((error) => {
-    setStatus(`Grid refresh failed: ${error.message}`);
+  syncDateRangeControls();
+  saveActiveDateRange();
+  refreshRangeFilteredMapData().catch((error) => {
+    setStatus(`Date range refresh failed: ${error.message}`);
   });
 });
-Promise.all([loadLatestSavedContextLayer(), loadGridLayer(), loadDashboard(), loadMetadata(), loadUrbanContext()]).catch((error) => {
+Promise.all([loadLatestSavedContextLayer(), loadGridLayer(), loadDashboard(), loadMetadata()]).catch((error) => {
   document.getElementById("status").textContent = `Backend unavailable: ${error.message}`;
 });
 }

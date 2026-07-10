@@ -10,16 +10,6 @@ const kpis = [
   ["RD", "Road Density", "road-density", "0", "0% vs last year", " km/km2"],
 ];
 
-const gridDetails = [
-  ["Grid ID", "grid-id"],
-  ["Date", "grid-date"],
-  ["NDBI", "grid-ndbi"],
-  ["Elevation avg", "grid-elev-avg"],
-  ["Elevation min", "grid-elev-min"],
-  ["Elevation max", "grid-elev-max"],
-  ["Land cover", "grid-land-cover"],
-];
-
 const inputClass =
   "min-h-8 w-full rounded-md border border-cyan-200/25 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-400 focus:border-emerald-300";
 const labelClass = "grid gap-1.5 text-xs font-bold text-cyan-100/70";
@@ -29,12 +19,17 @@ const secondaryButtonClass =
   "min-h-9 rounded-md border border-cyan-200/20 bg-sky-950/90 px-3 text-sm font-extrabold text-cyan-50 transition hover:bg-emerald-700";
 const cardClass =
   "min-w-0 overflow-hidden rounded-lg border border-cyan-200/25 bg-gradient-to-b from-sky-950/90 to-slate-950/90 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_12px_30px_rgba(0,0,0,0.18)]";
-const fieldClass =
-  "grid min-h-14 min-w-0 content-start gap-1 rounded-md border border-cyan-200/15 bg-slate-950/60 p-2 text-xs text-cyan-100/70";
 const mapControlButtonClass =
   "group inline-flex h-7 items-center gap-1 rounded border border-cyan-100/20 bg-cyan-950/55 px-2 text-[11px] font-bold text-cyan-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition hover:border-lime-200/45 hover:bg-emerald-700/90 focus:outline-none focus:ring-1 focus:ring-lime-200/60";
 const mapControlIconClass =
   "grid h-4 w-4 place-items-center rounded-sm border border-cyan-100/15 bg-slate-950/45 text-[9px] leading-none text-lime-200 transition group-hover:border-lime-200/35";
+const detailTabButtonClass =
+  "rounded-md border border-cyan-100/20 bg-slate-950/60 px-3 py-1.5 text-xs font-extrabold text-cyan-100 transition hover:border-lime-200/45 hover:text-white";
+const detailMetricClass =
+  "grid min-h-16 gap-1 rounded-md border border-cyan-200/15 bg-slate-950/60 p-2";
+const detailMetricLabelClass = "text-xs font-bold text-cyan-100/65";
+const detailMetricValueClass = "[overflow-wrap:anywhere] text-[15px] font-extrabold leading-tight text-lime-200";
+const detailMetricNoteClass = "text-[11px] leading-snug text-cyan-100/60";
 
 export default function MapPage() {
   return (
@@ -70,7 +65,21 @@ export default function MapPage() {
         </nav>
       </aside>
 
-      <section className="grid h-screen min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-2.5 overflow-hidden p-3">
+      <section className="grid h-screen min-h-0 min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2.5 overflow-hidden p-3">
+        <section className="flex min-w-0 justify-end">
+          <div className="grid grid-cols-[repeat(2,minmax(130px,1fr))_auto] items-end gap-2 rounded-lg border border-cyan-200/25 bg-slate-950/70 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] max-[620px]:grid-cols-1">
+            <label className={labelClass}>
+              Start
+              <input className={inputClass} id="map-range-start" type="date" />
+            </label>
+            <label className={labelClass}>
+              End
+              <input className={inputClass} id="map-range-end" type="date" />
+            </label>
+            <button className={secondaryButtonClass} id="apply-map-date-range" type="button">Apply</button>
+          </div>
+        </section>
+
         <section className="grid grid-cols-4 gap-2 max-[900px]:grid-cols-2" aria-label="Urban monitoring summary">
           {kpis.map(([icon, label, id, fallback, note, suffix], index) => (
             <div
@@ -180,19 +189,85 @@ export default function MapPage() {
 
           <article className={`${cardClass} col-start-2 col-end-4 row-span-2 overflow-y-auto`}>
             <h2 className="mb-2.5 text-[15px] font-bold text-cyan-50">Selected Grid Details</h2>
-            <div className="grid grid-cols-[repeat(3,minmax(130px,1fr))] gap-2">
-              {gridDetails.map(([label, id]) => (
-                <span className={fieldClass} key={id}>
-                  {label}
-                  <strong id={id} className="[overflow-wrap:anywhere] text-[15px] leading-tight text-cyan-50">0</strong>
-                </span>
+            <p className="m-0 flex flex-wrap gap-x-5 gap-y-2 text-sm font-bold leading-relaxed text-cyan-50">
+              <span>Grid ID: <strong id="grid-id" className="font-extrabold text-lime-200">0</strong></span>
+              <span>Date: <strong id="grid-date" className="font-extrabold text-lime-200">0</strong></span>
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2" role="tablist" aria-label="Selected grid analysis">
+              {["Land Use", "Population", "Environment"].map((tab, index) => (
+                <button
+                  key={tab}
+                  type="button"
+                  role="tab"
+                  aria-selected={index === 0 ? "true" : "false"}
+                  data-grid-detail-tab={tab.toLowerCase().replace(" ", "-")}
+                  className={`${detailTabButtonClass} ${index === 0 ? "selected-grid-tab-active" : ""}`}
+                >
+                  {tab}
+                </button>
               ))}
-              <span className={`${fieldClass} col-span-full`}>
-                Cover mix
-                <strong id="grid-cover-mix" className="[overflow-wrap:anywhere] text-[15px] leading-tight text-cyan-50">
-                  0
-                </strong>
-              </span>
+            </div>
+
+            <div className="mt-3">
+              <section data-grid-detail-panel="land-use" role="tabpanel">
+                <div className="grid grid-cols-2 gap-2 max-[620px]:grid-cols-1">
+                  {[
+                    ["NDBI Trends", "analysis-ndbi", "analysis-ndbi-note", "analysis-ndbi-chart"],
+                    ["Land Cover Mix", "analysis-land-cover", "analysis-land-cover-note", "analysis-land-cover-chart"],
+                    ["Built-up Area Trends", "analysis-built-up", "analysis-built-up-note", "analysis-built-up-chart"],
+                    ["Road Density Trends", "analysis-road", "analysis-road-note", "analysis-road-chart"],
+                    ["Elevation Avg", "analysis-elev-avg", "analysis-elev-avg-note", "analysis-elev-avg-chart"],
+                    ["Elevation Min", "analysis-elev-min", "analysis-elev-min-note", "analysis-elev-min-chart"],
+                    ["Elevation Max", "analysis-elev-max", "analysis-elev-max-note", "analysis-elev-max-chart"],
+                  ].map(([label, valueId, noteId, chartId]) => (
+                    <div className={detailMetricClass} key={valueId}>
+                      <span className={detailMetricLabelClass}>{label}</span>
+                      <strong id={valueId} className={detailMetricValueClass}>0</strong>
+                      <span id={noteId} className={detailMetricNoteClass}>No grid selected</span>
+                      {chartId === "analysis-land-cover-chart" ? (
+                        <div className="h-32 min-w-0">
+                          <canvas id={chartId} />
+                        </div>
+                      ) : (
+                        <div id={chartId} className="h-20 min-w-0" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="hidden" data-grid-detail-panel="population" role="tabpanel">
+                <div className="grid grid-cols-2 gap-2 max-[620px]:grid-cols-1">
+                  <div className={detailMetricClass}>
+                    <span className={detailMetricLabelClass}>Population Trend</span>
+                    <strong id="analysis-population" className={detailMetricValueClass}>0</strong>
+                    <span id="analysis-population-note" className={detailMetricNoteClass}>No grid selected</span>
+                    <div id="analysis-population-chart" className="h-24 min-w-0" />
+                  </div>
+                </div>
+              </section>
+
+              <section className="hidden" data-grid-detail-panel="environment" role="tabpanel">
+                <div className="grid grid-cols-2 gap-2 max-[620px]:grid-cols-1">
+                  {[
+                    ["NDVI Trends", "analysis-ndvi", "analysis-ndvi-note", "analysis-ndvi-chart"],
+                    ["Green Cover Trends", "analysis-green", "analysis-green-note", "analysis-green-chart"],
+                  ].map(([label, valueId, noteId, chartId]) => (
+                    <div className={detailMetricClass} key={valueId}>
+                      <span className={detailMetricLabelClass}>{label}</span>
+                      <strong id={valueId} className={detailMetricValueClass}>0</strong>
+                      <span id={noteId} className={detailMetricNoteClass}>No grid selected</span>
+                      {chartId === "analysis-ndvi-chart" ? (
+                        <div className="h-32 min-w-0">
+                          <canvas id={chartId} />
+                        </div>
+                      ) : (
+                        <div id={chartId} className="h-24 min-w-0" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
             </div>
           </article>
 

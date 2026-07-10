@@ -2,10 +2,26 @@
 
 import { useEffect } from "react";
 import type * as Leaflet from "leaflet";
+import {
+  Chart,
+  ArcElement,
+  BarController,
+  BarElement,
+  CategoryScale,
+  DoughnutController,
+  Filler,
+  Legend,
+  LineController,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Tooltip,
+} from "chart.js";
 
 declare global {
   interface Window {
     L: typeof Leaflet;
+    Chart: typeof Chart;
   }
 }
 
@@ -13,6 +29,21 @@ let bootPromise: Promise<void> | null = null;
 
 function bootMap() {
   if (bootPromise) return bootPromise;
+  Chart.register(
+    ArcElement,
+    BarController,
+    BarElement,
+    CategoryScale,
+    DoughnutController,
+    Filler,
+    Legend,
+    LineController,
+    LineElement,
+    LinearScale,
+    PointElement,
+    Tooltip,
+  );
+  window.Chart = Chart;
   bootPromise = import("leaflet").then((leafletModule) => {
     window.L = leafletModule;
     window.L.Icon.Default.mergeOptions({

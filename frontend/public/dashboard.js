@@ -17,6 +17,8 @@ const palette = {
   muted: "#68736d",
 };
 
+const dateRangeStorageKey = "vekin-date-range";
+
 function formatNumber(value, digits = 3) {
   return value === null || value === undefined || !Number.isFinite(Number(value))
     ? "--"
@@ -79,6 +81,79 @@ async function fetchJson(path, options = {}) {
 
 function setStatus(message) {
   document.getElementById("dashboard-status").textContent = message;
+}
+
+function formatDateInputValue(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getDefaultDateRange() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 30);
+  return {
+    startDate: formatDateInputValue(start),
+    endDate: formatDateInputValue(end),
+  };
+}
+
+function readStoredDateRange() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(dateRangeStorageKey) || "null");
+    if (parsed?.startDate && parsed?.endDate) return parsed;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getDateRangeInputs() {
+  return {
+    start: document.getElementById("dashboard-start-date"),
+    end: document.getElementById("dashboard-end-date"),
+  };
+}
+
+function getActiveDateRange() {
+  const { start, end } = getDateRangeInputs();
+  if (!start || !end) return readStoredDateRange() || getDefaultDateRange();
+  return {
+    startDate: start.value,
+    endDate: end.value,
+  };
+}
+
+function saveActiveDateRange() {
+  const { start, end } = getDateRangeInputs();
+  if (!start || !end) return getActiveDateRange();
+  const range = getActiveDateRange();
+  window.localStorage.setItem(dateRangeStorageKey, JSON.stringify(range));
+  return range;
+}
+
+function appendDateRangeParams(params, range = getActiveDateRange()) {
+  if (range.startDate) params.set("start_date", range.startDate);
+  if (range.endDate) params.set("end_date", range.endDate);
+  return params;
+}
+
+function initializeDateRangeInputs() {
+  const range = readStoredDateRange() || getDefaultDateRange();
+  const { start, end } = getDateRangeInputs();
+  if (!start || !end) return;
+  start.value = range.startDate;
+  end.value = range.endDate;
+  saveActiveDateRange();
+}
+
+function validateDateRange() {
+  const { startDate, endDate } = getActiveDateRange();
+  if (!startDate || !endDate) {
+    throw new Error("Choose both start and end dates.");
+  }
+  if (startDate > endDate) {
+    throw new Error("Start date must be before or equal to end date.");
+  }
 }
 
 function chartBaseOptions(extra = {}) {
@@ -533,17 +608,20 @@ function renderInsights({ dashboard, context }) {
 }
 
 async function loadDataDashboard() {
+  validateDateRange();
+  const dateRange = saveActiveDateRange();
   setStatus("Loading data from the local API...");
   const gridFilter = document.getElementById("dashboard-grid-filter");
   const selectedGridId = gridFilter.value;
-  const dashboardPath = selectedGridId
-    ? `/api/dashboard?grid_id=${encodeURIComponent(selectedGridId)}`
-    : "/api/dashboard";
+  const dashboardParams = appendDateRangeParams(new URLSearchParams(), dateRange);
+  if (selectedGridId) dashboardParams.set("grid_id", selectedGridId);
+  const metadataParams = appendDateRangeParams(new URLSearchParams([["limit", "200"]]), dateRange);
+  const gridParams = appendDateRangeParams(new URLSearchParams([["all_dates", "true"]]), dateRange);
   const [dashboard, metadata, context, grids] = await Promise.all([
-    fetchJson(dashboardPath),
-    fetchJson("/api/metadata"),
+    fetchJson(`/api/dashboard?${dashboardParams.toString()}`),
+    fetchJson(`/api/metadata?${metadataParams.toString()}`),
     fetchJson("/api/context/statistics/latest"),
-    fetchJson("/api/grids"),
+    fetchJson(`/api/grids?${gridParams.toString()}`),
   ]);
 
   allGridRows = grids.features.map((feature) => feature.properties);
@@ -566,25 +644,28 @@ async function loadDataDashboard() {
       ? grids.features.filter((feature) => feature.properties.grid_id === selectedGridId)
       : grids.features,
   };
-  const filteredContext = selectedGridId
-    ? {
-        ...context,
-        dem_statistics: (context.dem_statistics || []).filter((row) => row.grid_id === selectedGridId),
-        land_cover_statistics: (context.land_cover_statistics || []).filter((row) => row.grid_id === selectedGridId),
-        urban_context_statistics: (context.urban_context_statistics || []).filter((row) => row.grid_id === selectedGridId),
-      }
-    : context;
+  const processedGridIds = new Set(filteredGrids.features.map((feature) => feature.properties.grid_id));
+  const filteredContext = {
+    ...context,
+    dem_statistics: (context.dem_statistics || []).filter((row) => processedGridIds.has(row.grid_id)),
+    land_cover_statistics: (context.land_cover_statistics || []).filter((row) => processedGridIds.has(row.grid_id)),
+    urban_context_statistics: (context.urban_context_statistics || []).filter((row) => processedGridIds.has(row.grid_id)),
+  };
 
   document.getElementById("rainfall-trend-scope").textContent = selectedGridId
-    ? `CHIRPS Daily rainfall for ${selectedGridId}`
-    : "CHIRPS Daily average rainfall for the selected area";
+    ? `CHIRPS Daily rainfall for ${selectedGridId}, ${dateRange.startDate} to ${dateRange.endDate}`
+    : `CHIRPS Daily average rainfall, ${dateRange.startDate} to ${dateRange.endDate}`;
   renderOverview({ dashboard, grids: filteredGrids, context: filteredContext });
   renderContextLayer(context);
   renderGridTable();
   renderMetadataTable(metadata);
   renderCharts({ dashboard, metadata, context: filteredContext });
   renderInsights({ dashboard, context: filteredContext });
-  setStatus(selectedGridId ? `Showing ${selectedGridId}.` : `Loaded ${gridRows.length.toLocaleString()} grid rows.`);
+  setStatus(
+    selectedGridId
+      ? `Showing ${selectedGridId}, ${dateRange.startDate} to ${dateRange.endDate}.`
+      : `Loaded ${gridRows.length.toLocaleString()} grid rows, ${dateRange.startDate} to ${dateRange.endDate}.`,
+  );
 }
 
 async function deleteDashboardData() {
@@ -618,6 +699,14 @@ document.getElementById("delete-dashboard-data").addEventListener("click", () =>
 });
 
 document.getElementById("grid-filter").addEventListener("input", renderGridTable);
+document.getElementById("apply-dashboard-date-range")?.addEventListener("click", () => {
+  document.getElementById("grid-filter").value = "";
+  loadDataDashboard().catch((error) => {
+    setStatus(`Dashboard load failed: ${error.message}`);
+  });
+});
+document.getElementById("dashboard-start-date")?.addEventListener("change", saveActiveDateRange);
+document.getElementById("dashboard-end-date")?.addEventListener("change", saveActiveDateRange);
 document.getElementById("dashboard-grid-filter").addEventListener("change", () => {
   document.getElementById("grid-filter").value = "";
   loadDataDashboard().catch((error) => {
@@ -625,6 +714,7 @@ document.getElementById("dashboard-grid-filter").addEventListener("change", () =
   });
 });
 
+initializeDateRangeInputs();
 loadDataDashboard().catch((error) => {
   setStatus(`Dashboard load failed: ${error.message}`);
 });

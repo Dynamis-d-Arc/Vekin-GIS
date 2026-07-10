@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from psycopg import sql
@@ -816,7 +816,12 @@ def insert_ndvi_statistics(rows: list[dict[str, Any]], satellite_image_id: str) 
         return len(rows)
 
 
-def get_metadata(limit: int = 50) -> list[dict[str, Any]]:
+def get_metadata(
+    limit: int = 50,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[dict[str, Any]]:
     with get_connection() as conn:
         return conn.execute(
             """
@@ -830,15 +835,24 @@ def get_metadata(limit: int = 50) -> list[dict[str, Any]]:
               processing_status,
               created_at
             FROM satellite_images
+            WHERE (%(start_date)s::date IS NULL OR capture_date::date >= %(start_date)s::date)
+              AND (%(end_date)s::date IS NULL OR capture_date::date <= %(end_date)s::date)
             ORDER BY created_at DESC
-            LIMIT %s
+            LIMIT %(limit)s
             """,
-            (limit,),
+            {"limit": limit, "start_date": start_date, "end_date": end_date},
         ).fetchall()
 
 
-def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
+def get_grid_layer(
+    capture_date: datetime | None = None,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    all_dates: bool = False,
+) -> dict[str, Any]:
     date_filter = sql.SQL("")
+    date_limit = sql.SQL("LIMIT 1")
     params: dict[str, Any] = {}
     if capture_date:
         date_filter = sql.SQL(
@@ -852,6 +866,17 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
             """
         )
         params["capture_date"] = capture_date.date()
+    elif start_date or end_date:
+        if all_dates:
+            date_limit = sql.SQL("")
+        date_filter = sql.SQL(
+            """
+              AND (%(start_date)s::date IS NULL OR ns.capture_date::date >= %(start_date)s::date)
+              AND (%(end_date)s::date IS NULL OR ns.capture_date::date <= %(end_date)s::date)
+            """
+        )
+        params["start_date"] = start_date
+        params["end_date"] = end_date
 
     with get_connection() as conn:
         stats_schema = get_context_statistics_schema(conn)
@@ -885,7 +910,7 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
               WHERE ns.grid_id = g.grid_id
               {date_filter}
               ORDER BY ns.capture_date DESC
-              LIMIT 1
+              {date_limit}
             ) ns ON true
             LEFT JOIN LATERAL (
               SELECT ds.*
@@ -916,6 +941,7 @@ def get_grid_layer(capture_date: datetime | None = None) -> dict[str, Any]:
             """
             ).format(
                 date_filter=date_filter,
+                date_limit=date_limit,
                 dem_statistics=_stats_table(stats_schema, "dem_statistics"),
                 land_cover_statistics=_stats_table(stats_schema, "land_cover_statistics"),
                 urban_context_statistics=_stats_table(stats_schema, "urban_context_statistics"),
@@ -1065,8 +1091,13 @@ def get_latest_context_statistics() -> dict[str, Any]:
     }
 
 
-def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
-    params = {"grid_id": grid_id}
+def get_dashboard(
+    grid_id: str | None = None,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, Any]:
+    params = {"grid_id": grid_id, "start_date": start_date, "end_date": end_date}
     with get_connection() as conn:
         summary = conn.execute(
             """
@@ -1079,6 +1110,8 @@ def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
                 maximum_ndvi
               FROM ndvi_statistics
               WHERE (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
+                AND (%(start_date)s::date IS NULL OR capture_date::date >= %(start_date)s::date)
+                AND (%(end_date)s::date IS NULL OR capture_date::date <= %(end_date)s::date)
               ORDER BY grid_id, capture_date, created_at DESC
             )
             SELECT
@@ -1098,6 +1131,8 @@ def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
                 average_ndvi
               FROM ndvi_statistics
               WHERE (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
+                AND (%(start_date)s::date IS NULL OR capture_date::date >= %(start_date)s::date)
+                AND (%(end_date)s::date IS NULL OR capture_date::date <= %(end_date)s::date)
               ORDER BY grid_id, capture_date, created_at DESC
             )
             SELECT grid_id, average_ndvi, capture_date
@@ -1117,6 +1152,8 @@ def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
                 average_ndvi
               FROM ndvi_statistics
               WHERE (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
+                AND (%(start_date)s::date IS NULL OR capture_date::date >= %(start_date)s::date)
+                AND (%(end_date)s::date IS NULL OR capture_date::date <= %(end_date)s::date)
               ORDER BY grid_id, capture_date, created_at DESC
             )
             SELECT grid_id, average_ndvi, capture_date
@@ -1133,12 +1170,18 @@ def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
               SELECT DISTINCT ON (grid_id, capture_date)
                 grid_id,
                 capture_date,
-                average_ndvi
+                average_ndvi,
+                average_ndbi
               FROM ndvi_statistics
               WHERE (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
+                AND (%(start_date)s::date IS NULL OR capture_date::date >= %(start_date)s::date)
+                AND (%(end_date)s::date IS NULL OR capture_date::date <= %(end_date)s::date)
               ORDER BY grid_id, capture_date, created_at DESC
             )
-            SELECT capture_date::date AS date, avg(average_ndvi) AS average_ndvi
+            SELECT
+              capture_date::date AS date,
+              avg(average_ndvi) AS average_ndvi,
+              avg(average_ndbi) AS average_ndbi
             FROM latest_stats
             GROUP BY capture_date::date
             ORDER BY date
@@ -1178,6 +1221,8 @@ def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
             WHERE %(grid_id)s::text IS NULL
               AND source = 'chirps-daily'
               AND area_id = %(area_id)s::uuid
+              AND (%(start_date)s::date IS NULL OR capture_date >= %(start_date)s::date)
+              AND (%(end_date)s::date IS NULL OR capture_date <= %(end_date)s::date)
             UNION ALL
             SELECT
               capture_date AS date,
@@ -1193,11 +1238,15 @@ def get_dashboard(grid_id: str | None = None) -> dict[str, Any]:
               AND grid_id = %(grid_id)s::text
               AND source = 'chirps-daily'
               AND area_id = %(area_id)s::uuid
+              AND (%(start_date)s::date IS NULL OR capture_date >= %(start_date)s::date)
+              AND (%(end_date)s::date IS NULL OR capture_date <= %(end_date)s::date)
             ORDER BY date
             """,
             {
                 "area_id": rainfall_area["id"] if rainfall_area else None,
                 "grid_id": grid_id,
+                "start_date": start_date,
+                "end_date": end_date,
             },
         ).fetchall()
 

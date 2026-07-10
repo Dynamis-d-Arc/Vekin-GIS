@@ -52,12 +52,14 @@ export default function DashboardPage() {
 
       <div className="dashboard-filter-bar">
         <p id="dashboard-status" className="dashboard-status">Loading data from the local API...</p>
-        <label htmlFor="dashboard-grid-filter">
-          Grid
-          <select id="dashboard-grid-filter" defaultValue="">
-            <option value="">All grids</option>
-          </select>
-        </label>
+        <div className="dashboard-filter-controls">
+          <label htmlFor="dashboard-grid-filter">
+            Grid
+            <select id="dashboard-grid-filter" defaultValue="">
+              <option value="">All grids</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       <section className="data-section">

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
@@ -225,18 +225,31 @@ def process_rainfall_range(request: AreaDateRangeRequest) -> RainfallProcessResp
 
 
 @app.get("/api/metadata")
-def metadata(limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
-    return get_metadata(limit)
+def metadata(
+    limit: int = Query(default=50, ge=1, le=200),
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[dict[str, Any]]:
+    return get_metadata(limit, start_date=start_date, end_date=end_date)
 
 
 @app.get("/api/grids")
-def grids(capture_date: datetime | None = None) -> dict[str, Any]:
-    return get_grid_layer(capture_date)
+def grids(
+    capture_date: datetime | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    all_dates: bool = False,
+) -> dict[str, Any]:
+    return get_grid_layer(capture_date, start_date=start_date, end_date=end_date, all_dates=all_dates)
 
 
 @app.get("/api/dashboard")
-def dashboard(grid_id: str | None = None) -> dict[str, Any]:
-    return get_dashboard(grid_id)
+def dashboard(
+    grid_id: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict[str, Any]:
+    return get_dashboard(grid_id, start_date=start_date, end_date=end_date)
 
 
 @app.delete("/api/dashboard/data")

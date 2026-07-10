@@ -206,11 +206,20 @@ select {
   margin: 0;
 }
 
-.dashboard-filter-bar label {
+.dashboard-filter-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr);
+  align-items: end;
+  gap: 10px;
   min-width: min(320px, 100%);
 }
 
-.dashboard-filter-bar select {
+.dashboard-filter-controls label {
+  min-width: 0;
+}
+
+.dashboard-filter-controls input,
+.dashboard-filter-controls select {
   background: var(--field);
 }
 
@@ -456,7 +465,28 @@ li {
 
 .dashboard-actions {
   display: flex;
+  align-items: end;
   gap: 8px;
+}
+
+.dashboard-date-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr)) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  background: #fbfcfb;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.dashboard-date-range input,
+.dashboard-date-range button {
+  min-height: 34px;
+}
+
+.dashboard-date-range input {
+  padding: 6px 8px;
 }
 
 .dashboard-status {
@@ -1059,10 +1089,20 @@ tr:last-child td {
   display: none;
 }
 
+.selected-grid-tab-active {
+  border-color: rgba(217, 249, 157, 0.55);
+  background: rgba(21, 128, 61, 0.92);
+  color: #ffffff;
+}
+
 @media (max-width: 900px) {
   .dashboard-filter-bar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .dashboard-filter-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .app-shell {
@@ -1102,6 +1142,10 @@ tr:last-child td {
   .dashboard-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .dashboard-date-range {
+    grid-column: 1 / -1;
   }
 
   .dashboard-metrics {
@@ -1151,5 +1195,13 @@ tr:last-child td {
 
   .dashboard-actions > * {
     width: 100%;
+  }
+
+  .dashboard-date-range {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-filter-controls {
+    grid-template-columns: 1fr;
   }
 }
