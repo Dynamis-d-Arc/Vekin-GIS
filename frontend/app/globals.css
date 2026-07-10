@@ -903,7 +903,7 @@ tr:last-child td {
 .urban-grid {
   display: grid;
   grid-template-columns: minmax(480px, 1.55fr) minmax(260px, 0.85fr) minmax(260px, 0.85fr);
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.25fr) minmax(0, 0.9fr);
   grid-auto-rows: minmax(0, 1fr);
   gap: 8px;
   min-height: 0;
@@ -933,6 +933,15 @@ tr:last-child td {
 
 .urban-map-card {
   grid-row: span 3;
+}
+
+.growth-card,
+.population-card {
+  grid-column: 2 / -1;
+}
+
+.population-card {
+  overflow-y: auto;
 }
 
 .urban-map-card #map {
@@ -984,19 +993,21 @@ tr:last-child td {
 
 .grid-data-list {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(130px, 1fr));
   gap: 8px;
 }
 
 .context-data-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(130px, 1fr));
 }
 
 .grid-data-list span,
 .cover-mix-panel {
   display: grid;
+  align-content: start;
   gap: 4px;
   min-width: 0;
+  min-height: 54px;
   padding: 8px;
   background: rgba(5, 24, 39, 0.62);
   border: 1px solid rgba(116, 210, 231, 0.14);
@@ -1005,11 +1016,10 @@ tr:last-child td {
 
 .grid-data-list strong,
 .cover-mix-panel strong {
-  overflow: hidden;
   color: #eaf8f9;
   font-size: 15px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .cover-mix-panel p {
