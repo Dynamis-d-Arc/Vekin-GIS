@@ -131,12 +131,7 @@ const overlays = {
 };
 const layerControl = L.control.layers({ Streets: streets, Satellite: satellite }, overlays).addTo(map);
 
-let selectedArea = L.rectangle(bangkokBounds, {
-  color: "#1b7f5a",
-  weight: 2,
-  fillOpacity: 0.05,
-  pane: "selectionPane",
-}).addTo(map);
+let selectedArea = null;
 let drawMode = false;
 let firstCorner = null;
 let previewArea = null;
@@ -159,15 +154,27 @@ function formatBounds(bounds) {
 }
 
 function updateBboxReadout() {
-  bboxLabel.textContent = formatBounds(selectedArea.getBounds());
+  bboxLabel.textContent = selectedArea ? formatBounds(selectedArea.getBounds()) : "No area selected";
 }
 
 function setSelectedBounds(bounds, options = {}) {
+  if (!selectedArea) {
+    selectedArea = L.rectangle(bounds, {
+      color: "#1b7f5a",
+      weight: 2,
+      fillOpacity: 0.05,
+      pane: "selectionPane",
+    }).addTo(map);
+  }
   selectedArea.setBounds(bounds);
   updateBboxReadout();
   if (options.fit) {
     map.fitBounds(bounds, { padding: [24, 24] });
   }
+}
+
+function getSelectedBounds() {
+  return selectedArea ? selectedArea.getBounds() : null;
 }
 
 function parseBoundsText(value) {
@@ -666,13 +673,18 @@ document.getElementById("process-form").addEventListener("submit", async (event)
     setStatus("Processing failed: start date must be before or equal to end date.");
     return;
   }
+  const selectedBounds = getSelectedBounds();
+  if (!selectedBounds) {
+    setStatus("Choose an area first by clicking the map, drawing a box, searching, or pasting bounds.");
+    return;
+  }
 
   resetDrawMode();
   const isRange = startDate !== endDate;
   setStatus(isRange ? "Querying Sentinel-2 scenes across the date range..." : "Querying Sentinel-2 scenes for the selected date...");
   try {
     const payload = {
-      area: boundsToPolygon(selectedArea.getBounds()),
+      area: boundsToPolygon(selectedBounds),
       max_cloud_cover: maxCloud,
     };
     const result = await fetchJson("/api/ndvi/process-range", {
@@ -701,7 +713,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       ? ` CHIRPS rainfall skipped: ${rainfall.error.message}`
       : ` CHIRPS rainfall: ${rainfall.days_processed} days across ${rainfall.grid_rows_processed} grid/date rows.`;
     setStatus(`${completion}${rainfallStatus}${suffix}`);
-    map.fitBounds(selectedArea.getBounds(), { padding: [24, 24] });
+    map.fitBounds(selectedBounds, { padding: [24, 24] });
   } catch (error) {
     setStatus(`Processing failed: ${error.message}`);
   }
@@ -715,6 +727,11 @@ document.getElementById("change-detection-button").addEventListener("click", asy
     setStatus("Change detection needs a before date earlier than the after date.");
     return;
   }
+  const selectedBounds = getSelectedBounds();
+  if (!selectedBounds) {
+    setStatus("Choose an area first by clicking the map, drawing a box, searching, or pasting bounds.");
+    return;
+  }
 
   resetDrawMode();
   setStatus("Loading NDVI/NDBI change detection layer...");
@@ -723,7 +740,7 @@ document.getElementById("change-detection-button").addEventListener("click", asy
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        area: boundsToPolygon(selectedArea.getBounds()),
+        area: boundsToPolygon(selectedBounds),
         start_date: startDate,
         end_date: endDate,
       }),

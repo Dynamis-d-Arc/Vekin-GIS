@@ -41,7 +41,7 @@ export default function MapPage() {
           <button id="apply-bounds-button" type="button">Apply Bounds</button>
           <div className="bbox-readout">
             <span>Selected bounds</span>
-            <strong id="bbox-label">Bangkok default</strong>
+            <strong id="bbox-label">No area selected</strong>
           </div>
           <button type="submit">Process NDVI</button>
           <button id="change-detection-button" type="button">Show Change Layer</button>
