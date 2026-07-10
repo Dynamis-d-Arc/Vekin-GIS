@@ -16,6 +16,8 @@ def main() -> None:
     with psycopg.connect(settings.database_url) as conn:
         with conn.cursor() as cur:
             for sql_file in sorted(init_dir.glob("*.sql")):
+                if "seed" in sql_file.stem:
+                    continue
                 cur.execute(sql_file.read_text(encoding="utf-8"))
         conn.commit()
     print("Migrations applied.")

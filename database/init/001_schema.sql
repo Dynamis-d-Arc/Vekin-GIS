@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS ndvi_statistics (
   average_ndvi double precision,
   minimum_ndvi double precision,
   maximum_ndvi double precision,
+  average_ndbi double precision,
+  minimum_ndbi double precision,
+  maximum_ndbi double precision,
   geometry geometry(Polygon, 4326) NOT NULL,
   satellite_image_id uuid REFERENCES satellite_images(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -51,3 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_ndvi_statistics_geometry
   ON ndvi_statistics
   USING gist (geometry);
 
+ALTER TABLE ndvi_statistics
+  ADD COLUMN IF NOT EXISTS average_ndbi double precision,
+  ADD COLUMN IF NOT EXISTS minimum_ndbi double precision,
+  ADD COLUMN IF NOT EXISTS maximum_ndbi double precision;
