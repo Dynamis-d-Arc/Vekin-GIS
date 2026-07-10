@@ -1,8 +1,6 @@
 import { ApiConfig } from "./api-config";
 import { MapRuntime } from "./map-runtime";
 
-const navItems = ["Overview", "Land Use", "Population", "Environment", "Reports"];
-
 const kpis = [
   ["POP", "Population", "population-count", "0", "0% vs last year", ""],
   ["BLD", "Built-up Area", "built-up-area", "0", "0% vs last year", " km2"],
@@ -33,38 +31,7 @@ const detailMetricNoteClass = "text-[11px] leading-snug text-cyan-100/60";
 
 export default function MapPage() {
   return (
-    <main className="grid h-screen min-h-screen grid-cols-[220px_minmax(0,1fr)] overflow-hidden bg-[radial-gradient(circle_at_80%_0%,rgba(55,111,143,0.22),transparent_34%),linear-gradient(135deg,#031927_0%,#062239_48%,#02131f_100%)] text-cyan-50 max-[900px]:grid-cols-1">
-      <aside className="grid min-h-screen content-start gap-4 overflow-y-auto overflow-x-hidden border-r border-cyan-200/25 bg-slate-950/70 p-3 shadow-[10px_0_26px_rgba(0,0,0,0.2)]">
-        <div className="flex items-center gap-3 p-2">
-          <div className="grid h-11 w-11 place-items-center rounded-lg border border-cyan-200/30 bg-gradient-to-br from-sky-900 to-slate-950 text-xs font-black text-lime-300">
-            UI
-          </div>
-          <div>
-            <span className="text-xs text-cyan-100/65">Vekin GIS</span>
-            <strong className="mt-0.5 block text-[17px] text-cyan-50">Urban Insights</strong>
-          </div>
-        </div>
-
-        <nav className="grid gap-2" aria-label="Urban dashboard sections">
-          {navItems.map((item, index) => (
-            <a
-              key={item}
-              className={`grid min-h-9 grid-cols-[28px_1fr] items-center justify-start gap-2 rounded-md border px-4 text-sm font-extrabold no-underline transition ${
-                index === 0
-                  ? "border-lime-200/40 bg-gradient-to-r from-green-600 to-green-700 text-white"
-                  : "border-transparent bg-transparent text-cyan-50 hover:border-lime-200/40 hover:bg-green-700 hover:text-white"
-              }`}
-              href={item === "Reports" ? "/dashboard" : "#"}
-            >
-              <span className="grid h-6 w-6 place-items-center rounded bg-sky-950 text-[10px] text-cyan-200">
-                {item.slice(0, 2).toUpperCase()}
-              </span>
-              {item}
-            </a>
-          ))}
-        </nav>
-      </aside>
-
+    <main className="grid h-screen min-h-screen overflow-hidden bg-[radial-gradient(circle_at_80%_0%,rgba(55,111,143,0.22),transparent_34%),linear-gradient(135deg,#031927_0%,#062239_48%,#02131f_100%)] text-cyan-50">
       <section className="grid h-screen min-h-0 min-w-0 grid-rows-[auto_auto_minmax(0,1fr)] gap-2.5 overflow-hidden p-3">
         <section className="flex min-w-0 justify-end">
           <div className="grid grid-cols-[repeat(2,minmax(130px,1fr))_auto] items-end gap-2 rounded-lg border border-cyan-200/25 bg-slate-950/70 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] max-[620px]:grid-cols-1">

@@ -58,10 +58,35 @@ def _scaled_shape(width: int, height: int) -> tuple[int, int]:
     return max(1, round(height * scale)), max(1, round(width * scale))
 
 
-def _asset_hrefs(collection: str, asset_key: str, bbox_values: tuple[float, float, float, float]) -> list[str]:
+def _configured_years(value: str, fallback: list[int]) -> list[int]:
+    years: list[int] = []
+    for entry in value.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            years.append(int(entry))
+        except ValueError:
+            continue
+    return sorted(set(years)) or fallback
+
+
+def _asset_hrefs(
+    collection: str,
+    asset_key: str,
+    bbox_values: tuple[float, float, float, float],
+    datetime_range: str | None = None,
+) -> list[str]:
     settings = get_settings()
     client = Client.open(settings.planetary_computer_stac_url)
-    search = client.search(collections=[collection], bbox=bbox_values, max_items=24)
+    search_kwargs: dict[str, Any] = {
+        "collections": [collection],
+        "bbox": bbox_values,
+        "max_items": 24,
+    }
+    if datetime_range:
+        search_kwargs["datetime"] = datetime_range
+    search = client.search(**search_kwargs)
     hrefs = []
     for item in search.items():
         signed = planetary_computer.sign(item)
@@ -79,8 +104,12 @@ def _read_mosaic(
     asset_key: str,
     bbox_values: tuple[float, float, float, float],
     resampling: Resampling,
+    datetime_range: str | None = None,
 ) -> tuple[np.ndarray, Affine, Any, np.ndarray]:
-    datasets = [rasterio.open(href) for href in _asset_hrefs(collection, asset_key, bbox_values)]
+    datasets = [
+        rasterio.open(href)
+        for href in _asset_hrefs(collection, asset_key, bbox_values, datetime_range)
+    ]
     try:
         mosaic, transform = merge(datasets, bounds=bbox_values)
         crs = datasets[0].crs
@@ -139,16 +168,12 @@ def _read_worldpop_density(
 
 def _worldpop_years() -> list[int]:
     settings = get_settings()
-    years: list[int] = []
-    for value in settings.worldpop_population_years.split(","):
-        value = value.strip()
-        if not value:
-            continue
-        try:
-            years.append(int(value))
-        except ValueError:
-            continue
-    return sorted(set(years)) or [2020]
+    return _configured_years(settings.worldpop_population_years, [2020])
+
+
+def _land_cover_years() -> list[int]:
+    settings = get_settings()
+    return _configured_years(settings.land_cover_years, [2020, 2021])
 
 
 def _read_osm_roads(
@@ -283,9 +308,7 @@ def _context_grid_statistics(
     dem: np.ndarray,
     dem_transform: Affine,
     dem_crs: Any,
-    land_cover: np.ndarray,
-    land_cover_transform: Affine,
-    land_cover_crs: Any,
+    land_cover_by_year: dict[int, tuple[np.ndarray, Affine, Any]],
     population_density_by_year: dict[int, tuple[np.ndarray, Affine, Any]],
     road_lines: list[LineString] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -299,12 +322,6 @@ def _context_grid_statistics(
         else grid["geometry"]
         for grid in grids
     ]
-    land_cover_geometries = [
-        transform_geom("EPSG:4326", land_cover_crs, grid["geometry"])
-        if land_cover_crs
-        else grid["geometry"]
-        for grid in grids
-    ]
     dem_stats = zonal_stats(
         dem_geometries,
         dem.astype("float32"),
@@ -313,13 +330,31 @@ def _context_grid_statistics(
         geojson_out=False,
         nodata=np.nan,
     )
-    land_cover_stats = zonal_stats(
-        land_cover_geometries,
+    land_cover_stats_by_year: dict[int, list[dict[str, Any]]] = {}
+    for land_cover_year, (
         land_cover,
-        affine=land_cover_transform,
-        categorical=True,
-        geojson_out=False,
-        nodata=0,
+        land_cover_transform,
+        land_cover_crs,
+    ) in land_cover_by_year.items():
+        land_cover_geometries = [
+            transform_geom("EPSG:4326", land_cover_crs, grid["geometry"])
+            if land_cover_crs
+            else grid["geometry"]
+            for grid in grids
+        ]
+        land_cover_stats_by_year[land_cover_year] = zonal_stats(
+            land_cover_geometries,
+            land_cover,
+            affine=land_cover_transform,
+            categorical=True,
+            geojson_out=False,
+            nodata=0,
+        )
+    latest_land_cover_year = max(land_cover_stats_by_year, default=None)
+    land_cover_stats = (
+        land_cover_stats_by_year[latest_land_cover_year]
+        if latest_land_cover_year is not None
+        else [{} for _ in grids]
     )
     population_stats_by_year: dict[int, list[dict[str, Any] | None]] = {}
     for population_year, (
@@ -425,13 +460,26 @@ def _context_grid_statistics(
             road_lines=road_lines,
             grid_area_square_meters=grid_area_square_meters,
         )
-        land_cover_rows.append(
-            {
-                "grid_id": grid["grid_id"],
-                "dominant_class": dominant_class,
-                "class_percentages": percentages,
+        for land_cover_year, year_stats in land_cover_stats_by_year.items():
+            year_stat = year_stats[grid_index]
+            year_class_counts = {
+                int(class_value): int(count)
+                for class_value, count in year_stat.items()
+                if class_value is not None and int(class_value) != 0 and int(count) > 0
             }
-        )
+            year_total = sum(year_class_counts.values())
+            year_percentages = {
+                str(class_value): round((count / year_total) * 100, 2)
+                for class_value, count in sorted(year_class_counts.items())
+            } if year_total else {}
+            land_cover_rows.append(
+                {
+                    "grid_id": grid["grid_id"],
+                    "land_cover_year": land_cover_year,
+                    "dominant_class": max(year_class_counts, key=year_class_counts.get) if year_class_counts else None,
+                    "class_percentages": year_percentages,
+                }
+            )
         urban_context_rows.append(
             {
                 "grid_id": grid["grid_id"],
@@ -458,8 +506,8 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     settings.context_temp_dir.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha1(",".join(f"{value:.6f}" for value in bbox_values).encode("utf-8")).hexdigest()[:16]
     dem_path = settings.context_temp_dir / f"{key}-dem.png"
-    land_cover_path = settings.context_temp_dir / f"{key}-land-cover.png"
     population_years = _worldpop_years()
+    land_cover_years = _land_cover_years()
 
     dem, dem_transform, dem_crs, dem_overlay = _read_mosaic(
         collection="cop-dem-glo-30",
@@ -470,14 +518,36 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     if not dem_path.exists():
         _rgba_png(dem_path, _dem_rgba(dem_overlay))
 
-    land_cover, land_cover_transform, land_cover_crs, land_cover_overlay = _read_mosaic(
-        collection="esa-worldcover",
-        asset_key="map",
-        bbox_values=bbox_values,
-        resampling=Resampling.nearest,
-    )
+    land_cover_by_year: dict[int, tuple[np.ndarray, Affine, Any]] = {}
+    land_cover_overlay_by_year: dict[int, np.ndarray] = {}
+    for land_cover_year in land_cover_years:
+        try:
+            land_cover, land_cover_transform, land_cover_crs, land_cover_overlay = _read_mosaic(
+                collection="esa-worldcover",
+                asset_key="map",
+                bbox_values=bbox_values,
+                resampling=Resampling.nearest,
+                datetime_range=f"{land_cover_year}-01-01/{land_cover_year}-12-31",
+            )
+        except Exception:
+            continue
+        land_cover_by_year[land_cover_year] = (land_cover, land_cover_transform, land_cover_crs)
+        land_cover_overlay_by_year[land_cover_year] = land_cover_overlay
+    if not land_cover_by_year:
+        land_cover, land_cover_transform, land_cover_crs, land_cover_overlay = _read_mosaic(
+            collection="esa-worldcover",
+            asset_key="map",
+            bbox_values=bbox_values,
+            resampling=Resampling.nearest,
+        )
+        fallback_year = land_cover_years[-1]
+        land_cover_by_year[fallback_year] = (land_cover, land_cover_transform, land_cover_crs)
+        land_cover_overlay_by_year[fallback_year] = land_cover_overlay
+
+    latest_land_cover_year = max(land_cover_overlay_by_year)
+    land_cover_path = settings.context_temp_dir / f"{key}-land-cover-{latest_land_cover_year}.png"
     if not land_cover_path.exists():
-        _rgba_png(land_cover_path, _land_cover_rgba(land_cover_overlay))
+        _rgba_png(land_cover_path, _land_cover_rgba(land_cover_overlay_by_year[latest_land_cover_year]))
 
     population_density_by_year: dict[int, tuple[np.ndarray, Affine, Any]] = {}
     for population_year in population_years:
@@ -511,9 +581,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         dem=dem,
         dem_transform=dem_transform,
         dem_crs=dem_crs,
-        land_cover=land_cover,
-        land_cover_transform=land_cover_transform,
-        land_cover_crs=land_cover_crs,
+        land_cover_by_year=land_cover_by_year,
         population_density_by_year=population_density_by_year,
         road_lines=road_lines,
     )
@@ -532,6 +600,8 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         "urban_context_statistics_count": len(urban_context_rows),
         "population_statistics_count": len(population_rows),
         "population_years": sorted(population_density_by_year),
+        "land_cover_years": sorted(land_cover_by_year),
+        "land_cover_year": latest_land_cover_year,
         "bounds": [[south, west], [north, east]],
         "dem_url": relative_dem_url,
         "land_cover_url": relative_land_cover_url,

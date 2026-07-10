@@ -175,13 +175,47 @@ def ensure_context_statistics_tables() -> None:
               id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
               grid_id text NOT NULL REFERENCES public.grids(grid_id) ON DELETE CASCADE,
               context_layer_id uuid NOT NULL REFERENCES public.context_layers(id) ON DELETE CASCADE,
+              land_cover_year integer NOT NULL DEFAULT 0,
               dominant_class integer,
               class_percentages jsonb NOT NULL DEFAULT '{{}}'::jsonb,
               created_at timestamptz NOT NULL DEFAULT now(),
-              UNIQUE (grid_id, context_layer_id)
+              UNIQUE (grid_id, context_layer_id, land_cover_year)
             )
             """
             ).format(_stats_table(stats_schema, "land_cover_statistics"))
+        )
+        conn.execute(
+            sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS land_cover_year integer").format(
+                _stats_table(stats_schema, "land_cover_statistics")
+            )
+        )
+        conn.execute(
+            sql.SQL("UPDATE {} SET land_cover_year = 0 WHERE land_cover_year IS NULL").format(
+                _stats_table(stats_schema, "land_cover_statistics")
+            )
+        )
+        conn.execute(
+            sql.SQL("ALTER TABLE {} ALTER COLUMN land_cover_year SET DEFAULT 0").format(
+                _stats_table(stats_schema, "land_cover_statistics")
+            )
+        )
+        conn.execute(
+            sql.SQL("ALTER TABLE {} ALTER COLUMN land_cover_year SET NOT NULL").format(
+                _stats_table(stats_schema, "land_cover_statistics")
+            )
+        )
+        conn.execute(
+            sql.SQL(
+                "ALTER TABLE {} DROP CONSTRAINT IF EXISTS land_cover_statistics_grid_id_context_layer_id_key"
+            ).format(_stats_table(stats_schema, "land_cover_statistics"))
+        )
+        conn.execute(
+            sql.SQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (grid_id, context_layer_id, land_cover_year)"
+            ).format(
+                sql.Identifier(f"idx_{stats_schema}_land_cover_statistics_grid_context_year"),
+                _stats_table(stats_schema, "land_cover_statistics"),
+            )
         )
         conn.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (grid_id)").format(
@@ -192,6 +226,12 @@ def ensure_context_statistics_tables() -> None:
         conn.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (context_layer_id)").format(
                 sql.Identifier(f"idx_{stats_schema}_land_cover_statistics_context_layer_id"),
+                _stats_table(stats_schema, "land_cover_statistics"),
+            )
+        )
+        conn.execute(
+            sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (grid_id, land_cover_year)").format(
+                sql.Identifier(f"idx_{stats_schema}_land_cover_statistics_grid_year"),
                 _stats_table(stats_schema, "land_cover_statistics"),
             )
         )
@@ -649,16 +689,18 @@ def insert_context_statistics(
                     INSERT INTO {} (
                       grid_id,
                       context_layer_id,
+                      land_cover_year,
                       dominant_class,
                       class_percentages
                     )
                     VALUES (
                       %(grid_id)s,
                       %(context_layer_id)s,
+                      %(land_cover_year)s,
                       %(dominant_class)s,
                       %(class_percentages)s
                     )
-                    ON CONFLICT (grid_id, context_layer_id)
+                    ON CONFLICT (grid_id, context_layer_id, land_cover_year)
                     DO UPDATE SET
                       dominant_class = EXCLUDED.dominant_class,
                       class_percentages = EXCLUDED.class_percentages
@@ -959,6 +1001,7 @@ def get_grid_layer(
               ds.maximum_elevation,
               lcs.dominant_class,
               lcs.class_percentages,
+              lcs.land_cover_year,
               ucs.population_count,
               ucs.built_up_area_square_meters,
               ucs.green_cover_percentage,
@@ -985,7 +1028,7 @@ def get_grid_layer(
               FROM {land_cover_statistics} lcs
               JOIN context_layers cl ON cl.id = lcs.context_layer_id
               WHERE lcs.grid_id = g.grid_id
-              ORDER BY cl.updated_at DESC
+              ORDER BY cl.updated_at DESC, lcs.land_cover_year DESC
               LIMIT 1
             ) lcs ON true
             LEFT JOIN LATERAL (
@@ -1029,6 +1072,7 @@ def get_grid_layer(
                     "maximum_elevation": row["maximum_elevation"],
                     "dominant_land_cover_class": row["dominant_class"],
                     "land_cover_percentages": row["class_percentages"] or {},
+                    "land_cover_year": row["land_cover_year"],
                     "population_count": row["population_count"],
                     "built_up_area_square_meters": row["built_up_area_square_meters"],
                     "green_cover_percentage": row["green_cover_percentage"],
@@ -1116,12 +1160,13 @@ def get_latest_context_statistics() -> dict[str, Any]:
                 """
             SELECT
               grid_id,
+              land_cover_year,
               dominant_class,
               class_percentages,
               created_at
             FROM {}
             WHERE context_layer_id = %s
-            ORDER BY grid_id
+            ORDER BY grid_id, land_cover_year
             """
             ).format(_stats_table(stats_schema, "land_cover_statistics")),
             (context_layer["id"],),
@@ -1199,6 +1244,67 @@ def get_population_trend(grid_id: str | None = None) -> list[dict[str, Any]]:
             {"context_layer_id": context_layer["id"], "grid_id": grid_id},
         ).fetchall()
     return rows
+
+
+def get_land_cover_trend(grid_id: str | None = None) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        stats_schema = get_context_statistics_schema(conn)
+        context_layer = conn.execute(
+            """
+            SELECT id::text
+            FROM context_layers
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if not context_layer:
+            return []
+
+        rows = conn.execute(
+            sql.SQL(
+                """
+            SELECT
+              land_cover_year,
+              dominant_class,
+              class_percentages
+            FROM {}
+            WHERE context_layer_id = %(context_layer_id)s
+              AND (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
+            ORDER BY land_cover_year
+            """
+            ).format(_stats_table(stats_schema, "land_cover_statistics")),
+            {"context_layer_id": context_layer["id"], "grid_id": grid_id},
+        ).fetchall()
+
+    by_year: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        year = row["land_cover_year"]
+        bucket = by_year.setdefault(year, {"land_cover_year": year, "count": 0, "totals": {}})
+        bucket["count"] += 1
+        for class_value, percent in (row["class_percentages"] or {}).items():
+            numeric = float(percent)
+            bucket["totals"][str(class_value)] = bucket["totals"].get(str(class_value), 0.0) + numeric
+
+    trend = []
+    for year, bucket in sorted(by_year.items()):
+        count = max(bucket["count"], 1)
+        percentages = {
+            class_value: round(total / count, 2)
+            for class_value, total in sorted(bucket["totals"].items())
+        }
+        dominant_class = (
+            int(max(percentages, key=percentages.get))
+            if percentages
+            else None
+        )
+        trend.append(
+            {
+                "land_cover_year": year,
+                "dominant_class": dominant_class,
+                "class_percentages": percentages,
+            }
+        )
+    return trend
 
 
 def get_dashboard(

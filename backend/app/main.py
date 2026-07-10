@@ -20,6 +20,7 @@ from app.repositories import (
     get_context_layers,
     get_dashboard,
     get_grid_layer,
+    get_land_cover_trend,
     get_latest_context_statistics,
     get_metadata,
     get_ndvi_capture_dates_for_area,
@@ -256,6 +257,11 @@ def dashboard(
 @app.get("/api/population/trend")
 def population_trend(grid_id: str | None = None) -> list[dict[str, Any]]:
     return get_population_trend(grid_id)
+
+
+@app.get("/api/land-cover/trend")
+def land_cover_trend(grid_id: str | None = None) -> list[dict[str, Any]]:
+    return get_land_cover_trend(grid_id)
 
 
 @app.delete("/api/dashboard/data")

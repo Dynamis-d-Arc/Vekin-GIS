@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     )
     worldpop_population_time_ms: int = 1577836800000
     worldpop_population_years: str = "2020,2021,2022,2023,2024"
+    land_cover_years: str = "2020,2021"
     overpass_api_url: str = "https://overpass-api.de/api/interpreter"
     overpass_timeout_seconds: int = 45
     cors_origins: str = "*"

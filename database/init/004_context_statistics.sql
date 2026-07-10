@@ -45,11 +45,43 @@ BEGIN
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       grid_id text NOT NULL REFERENCES public.grids(grid_id) ON DELETE CASCADE,
       context_layer_id uuid NOT NULL REFERENCES public.context_layers(id) ON DELETE CASCADE,
+      land_cover_year integer NOT NULL DEFAULT 0,
       dominant_class integer,
       class_percentages jsonb NOT NULL DEFAULT ''{}''::jsonb,
       created_at timestamptz NOT NULL DEFAULT now(),
-      UNIQUE (grid_id, context_layer_id)
+      UNIQUE (grid_id, context_layer_id, land_cover_year)
     )',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'ALTER TABLE %I.land_cover_statistics ADD COLUMN IF NOT EXISTS land_cover_year integer',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'UPDATE %I.land_cover_statistics SET land_cover_year = 0 WHERE land_cover_year IS NULL',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'ALTER TABLE %I.land_cover_statistics ALTER COLUMN land_cover_year SET DEFAULT 0',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'ALTER TABLE %I.land_cover_statistics ALTER COLUMN land_cover_year SET NOT NULL',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'ALTER TABLE %I.land_cover_statistics DROP CONSTRAINT IF EXISTS land_cover_statistics_grid_id_context_layer_id_key',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'CREATE UNIQUE INDEX IF NOT EXISTS %I ON %I.land_cover_statistics (grid_id, context_layer_id, land_cover_year)',
+    'idx_land_cover_statistics_grid_context_year',
     stats_schema
   );
 
@@ -89,6 +121,12 @@ BEGIN
   EXECUTE format(
     'CREATE INDEX IF NOT EXISTS %I ON %I.urban_context_statistics (context_layer_id)',
     'idx_urban_context_statistics_context_layer_id',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'CREATE INDEX IF NOT EXISTS %I ON %I.land_cover_statistics (grid_id, land_cover_year)',
+    'idx_land_cover_statistics_grid_year',
     stats_schema
   );
 

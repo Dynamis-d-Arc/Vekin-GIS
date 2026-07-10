@@ -330,6 +330,7 @@ let selectedGridTrendRequestId = 0;
 let currentGridFeatures = [];
 let selectedGridTrendRows = [];
 let selectedPopulationTrendRows = [];
+let selectedLandCoverTrendRows = [];
 const drawButton = document.getElementById("draw-box-button");
 const bboxLabel = document.getElementById("bbox-label");
 
@@ -766,7 +767,75 @@ function renderDetailNdviTrendChart(rows) {
   });
 }
 
-function renderDetailLandCoverChart(percentages = {}) {
+function renderDetailLandCoverChart(percentages = {}, trendRows = selectedLandCoverTrendRows) {
+  const yearlyRows = (trendRows || []).filter((row) => row.land_cover_year && row.class_percentages);
+  if (yearlyRows.length > 1) {
+    const classTotals = {};
+    yearlyRows.forEach((row) => {
+      Object.entries(row.class_percentages || {}).forEach(([code, percent]) => {
+        const value = Number(percent);
+        if (Number.isFinite(value)) classTotals[code] = (classTotals[code] || 0) + value;
+      });
+    });
+    const classCodes = Object.entries(classTotals)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([code]) => code);
+    const colors = [
+      detailChartPalette.green,
+      detailChartPalette.lightGreen,
+      detailChartPalette.yellow,
+      detailChartPalette.amber,
+      detailChartPalette.red,
+      detailChartPalette.blue,
+    ];
+
+    renderDetailChart("analysis-land-cover-chart", {
+      type: "bar",
+      data: {
+        labels: yearlyRows.map((row) => String(row.land_cover_year)),
+        datasets: classCodes.map((code, index) => ({
+          label: landCoverLabel(Number(code)),
+          data: yearlyRows.map((row) => Number(row.class_percentages?.[code]) || 0),
+          backgroundColor: colors[index % colors.length],
+          borderWidth: 0,
+        })),
+      },
+      options: detailChartBaseOptions({
+        plugins: {
+          ...detailChartBaseOptions().plugins,
+          legend: {
+            position: "bottom",
+            labels: {
+              color: detailChartPalette.ink,
+              boxWidth: 10,
+              boxHeight: 10,
+              usePointStyle: true,
+            },
+          },
+        },
+        scales: {
+          x: {
+            stacked: true,
+            ticks: { color: detailChartPalette.muted },
+            grid: { display: false },
+          },
+          y: {
+            stacked: true,
+            beginAtZero: true,
+            max: 100,
+            ticks: {
+              color: detailChartPalette.muted,
+              callback: (value) => `${value}%`,
+            },
+            grid: { color: "rgba(159, 199, 200, 0.18)" },
+          },
+        },
+      }),
+    });
+    return;
+  }
+
   const entries = Object.entries(percentages || {})
     .map(([code, percent]) => [code, Number(percent)])
     .filter(([, value]) => Number.isFinite(value) && value > 0)
@@ -988,6 +1057,7 @@ function renderSelectedGridAnalysis(
   properties = {},
   trendRows = selectedGridTrendRows,
   populationTrendRows = selectedPopulationTrendRows,
+  landCoverTrendRows = selectedLandCoverTrendRows,
 ) {
   const rows = visibleGridRows();
   const ndbiAverage = averageFinite(rows.map((row) => row.average_ndbi));
@@ -1001,7 +1071,12 @@ function renderSelectedGridAnalysis(
   setText("analysis-ndbi", formatOptionalNumber(properties.average_ndbi));
   setText("analysis-ndbi-note", comparisonNote(properties.average_ndbi, ndbiAverage));
   setText("analysis-land-cover", landCoverLabel(properties.dominant_land_cover_class));
-  setText("analysis-land-cover-note", formatCoverMix(properties.land_cover_percentages));
+  setText(
+    "analysis-land-cover-note",
+    properties.land_cover_year
+      ? `${properties.land_cover_year}: ${formatCoverMix(properties.land_cover_percentages)}`
+      : formatCoverMix(properties.land_cover_percentages),
+  );
   setText("analysis-built-up", `${formatOptionalSquareKilometers(properties.built_up_area_square_meters)} km2`);
   setText("analysis-built-up-note", shareNote(properties.built_up_area_square_meters, builtUpTotal));
   setText("analysis-road", `${formatOptionalNumber(properties.road_density_km_per_square_km)} km/km2`);
@@ -1020,7 +1095,7 @@ function renderSelectedGridAnalysis(
   setText("analysis-green-note", comparisonNote(properties.green_cover_percentage, greenAverage));
   renderMiniLineChart("analysis-ndbi-chart", trendRows, "average_ndbi", "#67e8f9");
   renderDetailNdviTrendChart(trendRows);
-  renderDetailLandCoverChart(properties.land_cover_percentages);
+  renderDetailLandCoverChart(properties.land_cover_percentages, landCoverTrendRows);
   renderMiniComparisonChart("analysis-built-up-chart", properties.built_up_area_square_meters, builtUpTotal / Math.max(rows.length, 1), {
     formatter: formatOptionalSquareKilometers,
   });
@@ -1044,6 +1119,7 @@ function renderGridDataValues(
   properties = {},
   trendRows = selectedGridTrendRows,
   populationTrendRows = selectedPopulationTrendRows,
+  landCoverTrendRows = selectedLandCoverTrendRows,
 ) {
   setText("grid-id", properties.grid_id || "0");
   setText("grid-ndvi", formatOptionalNumber(properties.average_ndvi));
@@ -1059,8 +1135,13 @@ function renderGridDataValues(
   setText("grid-elev-min", formatOptionalNumber(properties.minimum_elevation));
   setText("grid-elev-max", formatOptionalNumber(properties.maximum_elevation));
   setText("grid-land-cover", landCoverLabel(properties.dominant_land_cover_class));
-  setText("grid-cover-mix", formatCoverMix(properties.land_cover_percentages));
-  renderSelectedGridAnalysis(properties, trendRows, populationTrendRows);
+  setText(
+    "grid-cover-mix",
+    properties.land_cover_year
+      ? `${properties.land_cover_year}: ${formatCoverMix(properties.land_cover_percentages)}`
+      : formatCoverMix(properties.land_cover_percentages),
+  );
+  renderSelectedGridAnalysis(properties, trendRows, populationTrendRows, landCoverTrendRows);
 }
 
 function renderSelectedGridInfo(feature) {
@@ -1086,14 +1167,17 @@ async function loadSelectedGridTrend(gridId, properties) {
   const requestId = ++selectedGridTrendRequestId;
   const params = appendDateRangeParams(new URLSearchParams([["grid_id", gridId]]));
   const populationParams = new URLSearchParams([["grid_id", gridId]]);
-  const [dashboard, populationTrend] = await Promise.all([
+  const landCoverParams = new URLSearchParams([["grid_id", gridId]]);
+  const [dashboard, populationTrend, landCoverTrend] = await Promise.all([
     fetchJson(`/api/dashboard?${params.toString()}`),
     fetchJson(`/api/population/trend?${populationParams.toString()}`),
+    fetchJson(`/api/land-cover/trend?${landCoverParams.toString()}`),
   ]);
   if (requestId !== selectedGridTrendRequestId) return;
   selectedGridTrendRows = dashboard.trend || [];
   selectedPopulationTrendRows = populationTrend || [];
-  renderSelectedGridAnalysis(properties, selectedGridTrendRows, selectedPopulationTrendRows);
+  selectedLandCoverTrendRows = landCoverTrend || [];
+  renderSelectedGridAnalysis(properties, selectedGridTrendRows, selectedPopulationTrendRows, selectedLandCoverTrendRows);
 }
 
 function popupContent(p) {
@@ -1223,6 +1307,7 @@ async function loadGridLayer(captureDate = null) {
   currentGridFeatures = grid.features || [];
   selectedGridTrendRows = [];
   selectedPopulationTrendRows = [];
+  selectedLandCoverTrendRows = [];
   if (overlays.Grids) {
     map.removeLayer(overlays.Grids);
     layerControl.removeLayer(overlays.Grids);
