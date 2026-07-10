@@ -1089,6 +1089,10 @@ tr:last-child td {
   display: none;
 }
 
+.process-form-panel {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .selected-grid-tab-active {
   border-color: rgba(217, 249, 157, 0.55);
   background: rgba(21, 128, 61, 0.92);
@@ -1165,6 +1169,47 @@ tr:last-child td {
   }
 }
 
+@media (max-width: 760px) {
+  #map-card {
+    display: grid;
+    grid-template-rows: auto auto minmax(280px, 1fr);
+  }
+
+  #map-card #map {
+    height: 100%;
+  }
+
+  #process-form.process-form-panel {
+    position: static;
+    z-index: 430;
+    width: 100%;
+    max-height: min(42vh, 430px);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-self: start;
+    margin-bottom: 8px;
+  }
+
+  #process-form.process-form-panel > label:first-child,
+  #process-form.process-form-panel > label:nth-of-type(2),
+  #process-form.process-form-panel > div:first-of-type,
+  #process-form.process-form-panel > div:nth-of-type(2),
+  #process-form.process-form-panel > #apply-bounds-button,
+  #process-form.process-form-panel > button[type="submit"],
+  #process-form.process-form-panel > #change-detection-button,
+  #process-form.process-form-panel > #status {
+    grid-column: 1 / -1;
+  }
+
+  #map-card.map-card-expanded {
+    display: grid;
+    grid-template-rows: auto auto minmax(280px, 1fr);
+  }
+
+  #map-card.map-card-expanded #map {
+    height: 100%;
+  }
+}
+
 @media (max-width: 520px) {
   .map-panel {
     min-height: 100vh;
@@ -1203,5 +1248,14 @@ tr:last-child td {
 
   .dashboard-filter-controls {
     grid-template-columns: 1fr;
+  }
+
+  #process-form.process-form-panel {
+    max-height: min(50vh, 460px);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #process-form.process-form-panel > div:nth-of-type(3) {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

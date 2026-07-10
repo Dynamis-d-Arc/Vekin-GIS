@@ -1505,7 +1505,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
   }
 });
 
-document.getElementById("change-detection-button").addEventListener("click", async () => {
+document.getElementById("change-detection-button")?.addEventListener("click", async () => {
   const startDate = document.getElementById("date").value;
   const endDate = document.getElementById("end-date").value;
   if (!startDate || !endDate) return;

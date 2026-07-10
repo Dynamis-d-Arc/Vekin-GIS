@@ -101,7 +101,7 @@ export default function MapPage() {
 
             <form
               id="process-form"
-              className="absolute left-5 top-12 z-[430] grid max-h-[calc(100%-72px)] w-[min(330px,calc(100%-44px))] gap-2 overflow-y-auto rounded-lg border border-cyan-200/25 bg-slate-950/85 p-3 text-cyan-50 shadow-[0_16px_34px_rgba(0,0,0,0.28)] backdrop-blur-md max-[900px]:left-4 max-[900px]:w-[min(320px,calc(100%-32px))] max-[520px]:inset-x-3 max-[520px]:w-auto max-[520px]:max-h-[calc(100%-64px)]"
+              className="process-form-panel absolute left-5 top-12 z-[430] grid max-h-[calc(100%-72px)] w-[min(330px,calc(100%-44px))] gap-2 overflow-y-auto rounded-lg border border-cyan-200/25 bg-slate-950/85 p-3 text-cyan-50 shadow-[0_16px_34px_rgba(0,0,0,0.28)] backdrop-blur-md"
             >
               <label className={labelClass}>
                 Area of interest
@@ -140,9 +140,6 @@ export default function MapPage() {
                 <input className={inputClass} id="cloud" type="number" min="0" max="100" defaultValue="40" />
               </label>
               <button className={buttonClass} type="submit">Process Grid</button>
-              <button className={secondaryButtonClass} id="change-detection-button" type="button">
-                Show Change Layer
-              </button>
               <p id="status" className="m-0 text-sm leading-snug text-cyan-100/75">
                 Select an area, choose a date range, then process.
               </p>
