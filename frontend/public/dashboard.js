@@ -83,6 +83,12 @@ function setStatus(message) {
   document.getElementById("dashboard-status").textContent = message;
 }
 
+function formatSignedNumber(value, digits = 3) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "--";
+  const numeric = Number(value);
+  return `${numeric >= 0 ? "+" : ""}${numeric.toFixed(digits)}`;
+}
+
 function formatDateInputValue(date) {
   return date.toISOString().slice(0, 10);
 }
@@ -212,11 +218,12 @@ function ndviBucket(value) {
   return ">=0.60";
 }
 
-function renderTrendChart(rows) {
-  const points = rows
+function renderTrendChart(temporal) {
+  const points = (temporal?.periods || [])
     .map((row) => ({
-      label: row.date,
+      label: row.period_start,
       value: Number(row.average_ndvi),
+      baseline: row.historical_mean_ndvi === null ? null : Number(row.historical_mean_ndvi),
     }))
     .filter((row) => Number.isFinite(row.value));
 
@@ -226,7 +233,7 @@ function renderTrendChart(rows) {
       labels: points.map((point) => point.label),
       datasets: [
         {
-          label: "Average NDVI",
+          label: `${temporal?.granularity === "weekly" ? "Weekly" : "Monthly"} average NDVI`,
           data: points.map((point) => point.value),
           borderColor: palette.green,
           backgroundColor: "rgba(27, 127, 90, 0.18)",
@@ -234,6 +241,15 @@ function renderTrendChart(rows) {
           pointRadius: 4,
           pointHoverRadius: 6,
           tension: 0.32,
+        },
+        {
+          label: "Historical seasonal mean",
+          data: points.map((point) => point.baseline),
+          borderColor: palette.blue,
+          borderDash: [6, 5],
+          fill: false,
+          pointRadius: 3,
+          tension: 0.2,
         },
       ],
     },
@@ -245,6 +261,42 @@ function renderTrendChart(rows) {
         },
         y: {
           beginAtZero: true,
+          ticks: { color: palette.muted },
+          grid: { color: "rgba(217, 225, 220, 0.7)" },
+        },
+      },
+    }),
+  });
+}
+
+function renderTemporalAnomalyChart(temporal) {
+  const points = (temporal?.periods || []).map((row) => ({
+    label: row.period_start,
+    value: row.anomaly_zscore_ndvi === null ? null : Number(row.anomaly_zscore_ndvi),
+  }));
+  renderChart("ndvi-anomaly-chart", {
+    type: "bar",
+    data: {
+      labels: points.map((point) => point.label),
+      datasets: [
+        {
+          label: "NDVI anomaly z-score",
+          data: points.map((point) => point.value),
+          backgroundColor: points.map((point) =>
+            point.value === null ? palette.slate : point.value >= 0 ? palette.green : palette.red,
+          ),
+          borderRadius: 5,
+        },
+      ],
+    },
+    options: chartBaseOptions({
+      scales: {
+        x: {
+          ticks: { color: palette.muted, maxRotation: 0 },
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: false,
           ticks: { color: palette.muted },
           grid: { color: "rgba(217, 225, 220, 0.7)" },
         },
@@ -462,7 +514,8 @@ function renderCharts({ dashboard, metadata, context }) {
     setStatus("Chart.js is unavailable. Check your internet connection or CDN access.");
     return;
   }
-  renderTrendChart(dashboard.trend || []);
+  renderTrendChart(dashboard.temporal);
+  renderTemporalAnomalyChart(dashboard.temporal);
   renderRainfallTrendChart(dashboard.rainfall_trend || []);
   renderNdviDistributionChart();
   renderLandCoverChart();
@@ -516,6 +569,7 @@ function renderOverview({ dashboard, grids, context }) {
   const rainfallRows = dashboard.rainfall_trend || [];
   const rainfallAverage = averageFinite(rainfallRows.map((row) => row.average_rainfall_mm));
   const rainfallTotal = sumFinite(rainfallRows.map((row) => row.average_rainfall_mm));
+  const temporalSummary = dashboard.temporal?.summary || {};
 
   document.getElementById("total-grids").textContent = formatCompactNumber(properties.length);
   document.getElementById("ndvi-grids").textContent = formatCompactNumber(ndviCount);
@@ -527,6 +581,10 @@ function renderOverview({ dashboard, grids, context }) {
   document.getElementById("dashboard-population").textContent = populationTotal > 0 ? formatCompactNumber(populationTotal) : "--";
   document.getElementById("dashboard-built-up").textContent = builtUpTotal > 0 ? formatSquareKilometers(builtUpTotal) : "--";
   document.getElementById("dashboard-road-density").textContent = roadDensityAverage === null ? "--" : formatNumber(roadDensityAverage);
+  document.getElementById("dashboard-period-change").textContent = formatSignedNumber(temporalSummary.latest_previous_period_delta_ndvi);
+  document.getElementById("dashboard-year-change").textContent = formatSignedNumber(temporalSummary.latest_year_over_year_delta_ndvi);
+  document.getElementById("dashboard-ndvi-anomaly").textContent = formatSignedNumber(temporalSummary.latest_anomaly_zscore_ndvi, 2);
+  document.getElementById("dashboard-ndvi-slope").textContent = formatSignedNumber(temporalSummary.ndvi_slope_per_30_days);
 }
 
 function renderGridTable() {
@@ -584,14 +642,16 @@ function renderInsights({ dashboard, context }) {
   const populationTotal = sumFinite(contextRows.map((row) => row.population_count));
   const greenAverage = averageFinite(contextRows.map((row) => row.green_cover_percentage));
   const roadDensityAverage = averageFinite(contextRows.map((row) => row.road_density_km_per_square_km));
-  const trend = dashboard.trend || [];
-  const previous = Number(trend.at(-2)?.average_ndvi);
-  const current = Number(trend.at(-1)?.average_ndvi);
-  const change = Number.isFinite(previous) && Number.isFinite(current) ? current - previous : null;
+  const temporal = dashboard.temporal || { periods: [], summary: {} };
+  const latestPeriod = temporal.periods.at(-1) || {};
   const rainfallRows = dashboard.rainfall_trend || [];
   const latestRainfall = Number(rainfallRows.at(-1)?.average_rainfall_mm);
   const items = [
-    ["NDVI change", change === null ? "--" : `${change >= 0 ? "+" : ""}${formatNumber(change)}`],
+    ["Previous-period NDVI", formatSignedNumber(latestPeriod.previous_period_delta_ndvi)],
+    ["Same period last year", formatSignedNumber(latestPeriod.year_over_year_delta_ndvi)],
+    ["Seasonal NDVI anomaly", formatSignedNumber(latestPeriod.anomaly_zscore_ndvi, 2)],
+    ["NDVI slope / 30 days", formatSignedNumber(temporal.summary.ndvi_slope_per_30_days)],
+    ["NDBI slope / 30 days", formatSignedNumber(temporal.summary.ndbi_slope_per_30_days)],
     ["Latest rainfall", Number.isFinite(latestRainfall) ? formatMillimeters(latestRainfall) : "--"],
     ["Average green cover", greenAverage === null ? "--" : `${formatNumber(greenAverage)}%`],
     ["Average road density", roadDensityAverage === null ? "--" : `${formatNumber(roadDensityAverage)} km/sq km`],
@@ -614,6 +674,8 @@ async function loadDataDashboard() {
   const gridFilter = document.getElementById("dashboard-grid-filter");
   const selectedGridId = gridFilter.value;
   const dashboardParams = appendDateRangeParams(new URLSearchParams(), dateRange);
+  const aggregation = document.getElementById("dashboard-aggregation").value;
+  dashboardParams.set("aggregation", aggregation);
   if (selectedGridId) dashboardParams.set("grid_id", selectedGridId);
   const metadataParams = appendDateRangeParams(new URLSearchParams([["limit", "200"]]), dateRange);
   const gridParams = appendDateRangeParams(new URLSearchParams([["all_dates", "true"]]), dateRange);
@@ -655,6 +717,8 @@ async function loadDataDashboard() {
   document.getElementById("rainfall-trend-scope").textContent = selectedGridId
     ? `CHIRPS Daily rainfall for ${selectedGridId}, ${dateRange.startDate} to ${dateRange.endDate}`
     : `CHIRPS Daily average rainfall, ${dateRange.startDate} to ${dateRange.endDate}`;
+  document.getElementById("temporal-trend-scope").textContent =
+    `${aggregation === "weekly" ? "Weekly" : "Monthly"} NDVI with historical seasonal baseline, ${dateRange.startDate} to ${dateRange.endDate}`;
   renderOverview({ dashboard, grids: filteredGrids, context: filteredContext });
   renderContextLayer(context);
   renderGridTable();
@@ -709,6 +773,11 @@ document.getElementById("dashboard-start-date")?.addEventListener("change", save
 document.getElementById("dashboard-end-date")?.addEventListener("change", saveActiveDateRange);
 document.getElementById("dashboard-grid-filter").addEventListener("change", () => {
   document.getElementById("grid-filter").value = "";
+  loadDataDashboard().catch((error) => {
+    setStatus(`Dashboard load failed: ${error.message}`);
+  });
+});
+document.getElementById("dashboard-aggregation").addEventListener("change", () => {
   loadDataDashboard().catch((error) => {
     setStatus(`Dashboard load failed: ${error.message}`);
   });

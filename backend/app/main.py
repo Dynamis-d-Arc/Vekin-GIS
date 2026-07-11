@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -250,8 +250,14 @@ def dashboard(
     grid_id: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    aggregation: Literal["weekly", "monthly"] = "monthly",
 ) -> dict[str, Any]:
-    return get_dashboard(grid_id, start_date=start_date, end_date=end_date)
+    return get_dashboard(
+        grid_id,
+        start_date=start_date,
+        end_date=end_date,
+        aggregation=aggregation,
+    )
 
 
 @app.get("/api/population/trend")

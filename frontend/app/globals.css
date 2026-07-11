@@ -386,10 +386,10 @@ select {
 
 .dashboard-filter-controls {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr);
+  grid-template-columns: minmax(180px, 1fr) minmax(130px, 0.7fr) repeat(2, minmax(140px, 0.8fr)) auto;
   align-items: end;
   gap: 10px;
-  min-width: min(320px, 100%);
+  min-width: min(900px, 100%);
 }
 
 .dashboard-filter-controls label {

@@ -179,7 +179,7 @@ export default function MapPage() {
             </div>
           </article>
 
-          <article className={`${cardClass} dashboard-panel grid-details-panel col-start-2 col-end-4 row-span-2 overflow-y-auto`}>
+          <article className={`${cardClass} dashboard-panel grid-details-panel col-start-2 col-end-4 row-span-3 overflow-y-auto`}>
             <span className="panel-eyebrow">Selection analysis</span>
             <h2 className="mb-2.5 mt-0.5 text-[15px] font-bold text-cyan-50">Selected Grid Details</h2>
             <p className="m-0 flex flex-wrap gap-x-5 gap-y-2 text-sm font-bold leading-relaxed text-cyan-50">
@@ -272,29 +272,14 @@ export default function MapPage() {
             </div>
           </article>
 
-          <article className={`${cardClass} dashboard-panel environment-panel col-start-2 col-end-4`}>
-            <span className="panel-eyebrow">Environmental health</span>
-            <h2 className="mb-2.5 mt-0.5 text-[15px] font-bold text-cyan-50">Vegetation Indicators</h2>
-            <div className="grid grid-cols-4 gap-2">
-              {[
-                ["Avg. NDVI", "avg-ndvi", "placeholder"],
-                ["Minimum NDVI", "min-ndvi", "placeholder"],
-                ["Maximum NDVI", "max-ndvi", "placeholder"],
-                ["Daily change", "change-ndvi", "placeholder"],
-              ].map(([label, id, note]) => (
-                <div className="grid min-h-0 gap-1 rounded-md border border-cyan-200/15 bg-slate-950/60 p-2" key={id}>
-                  <span id={id === "change-ndvi" ? "change-label" : undefined} className="text-xs text-cyan-100/65">
-                    {label}
-                  </span>
-                  <strong id={id} className="text-lg text-lime-300">0</strong>
-                  <em className="text-[11px] not-italic text-red-300">{note}</em>
-                </div>
-              ))}
-            </div>
-          </article>
         </section>
 
         <div className="hidden" aria-hidden="true">
+          <span id="change-label">Daily change</span>
+          <strong id="avg-ndvi">0</strong>
+          <strong id="min-ndvi">0</strong>
+          <strong id="max-ndvi">0</strong>
+          <strong id="change-ndvi">0</strong>
           <ol id="lowest">
             <li>0</li>
             <li>0</li>

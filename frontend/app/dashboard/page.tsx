@@ -17,10 +17,15 @@ const metrics = [
   ["Total population", "dashboard-population", "latest context"],
   ["Built-up sq km", "dashboard-built-up", "ESA WorldCover"],
   ["Avg road density", "dashboard-road-density", "km / sq km"],
+  ["Period NDVI change", "dashboard-period-change", "versus previous period"],
+  ["Annual NDVI change", "dashboard-year-change", "same period last year"],
+  ["NDVI anomaly", "dashboard-ndvi-anomaly", "seasonal z-score"],
+  ["NDVI slope", "dashboard-ndvi-slope", "change per 30 days"],
 ];
 
 const charts = [
-  ["ndvi-trend-chart", "NDVI Trend", "Average NDVI by capture date", " tall-chart"],
+  ["ndvi-trend-chart", "NDVI Trend", "Period average and historical baseline", " tall-chart"],
+  ["ndvi-anomaly-chart", "NDVI Anomalies", "Seasonal anomaly z-score by period", ""],
   ["rainfall-trend-chart", "Rainfall Trend", "CHIRPS Daily average rainfall", ""],
   ["land-cover-chart", "Land Cover Mix", "Latest dominant land-cover share", ""],
   ["ndvi-distribution-chart", "NDVI Distribution", "Grid count by NDVI range", ""],
@@ -59,6 +64,22 @@ export default function DashboardPage() {
               <option value="">All grids</option>
             </select>
           </label>
+          <label htmlFor="dashboard-aggregation">
+            Aggregation
+            <select id="dashboard-aggregation" defaultValue="monthly">
+              <option value="monthly">Monthly</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </label>
+          <label htmlFor="dashboard-start-date">
+            From
+            <input id="dashboard-start-date" type="date" />
+          </label>
+          <label htmlFor="dashboard-end-date">
+            To
+            <input id="dashboard-end-date" type="date" />
+          </label>
+          <button id="apply-dashboard-date-range" type="button">Apply</button>
         </div>
       </div>
 
@@ -80,7 +101,17 @@ export default function DashboardPage() {
           <article className={`chart-panel${index === 0 ? " hero-chart" : ""}`} key={id}>
             <div>
               <h2>{title}</h2>
-              <span id={id === "rainfall-trend-chart" ? "rainfall-trend-scope" : undefined}>{subtitle}</span>
+              <span
+                id={
+                  id === "rainfall-trend-chart"
+                    ? "rainfall-trend-scope"
+                    : id === "ndvi-trend-chart"
+                      ? "temporal-trend-scope"
+                      : undefined
+                }
+              >
+                {subtitle}
+              </span>
             </div>
             <div className={`chart-frame${frameClass}`}>
               <canvas id={id} />

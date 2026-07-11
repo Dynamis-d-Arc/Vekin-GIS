@@ -6,6 +6,7 @@ from psycopg.types.json import Json
 
 from app.config import get_settings
 from app.db import get_connection
+from app.temporal import TemporalGranularity, build_temporal_analysis
 
 
 DEFAULT_GRID_SIZE_METERS = 1000
@@ -1312,6 +1313,7 @@ def get_dashboard(
     *,
     start_date: date | None = None,
     end_date: date | None = None,
+    aggregation: TemporalGranularity = "monthly",
 ) -> dict[str, Any]:
     params = {"grid_id": grid_id, "start_date": start_date, "end_date": end_date}
     with get_connection() as conn:
@@ -1380,7 +1382,7 @@ def get_dashboard(
             """,
             params,
         ).fetchall()
-        trend = conn.execute(
+        historical_trend = conn.execute(
             """
             WITH latest_stats AS (
               SELECT DISTINCT ON (grid_id, capture_date)
@@ -1390,14 +1392,16 @@ def get_dashboard(
                 average_ndbi
               FROM ndvi_statistics
               WHERE (%(grid_id)s::text IS NULL OR grid_id = %(grid_id)s::text)
-                AND (%(start_date)s::date IS NULL OR capture_date::date >= %(start_date)s::date)
                 AND (%(end_date)s::date IS NULL OR capture_date::date <= %(end_date)s::date)
               ORDER BY grid_id, capture_date, created_at DESC
             )
             SELECT
               capture_date::date AS date,
               avg(average_ndvi) AS average_ndvi,
-              avg(average_ndbi) AS average_ndbi
+              avg(average_ndbi) AS average_ndbi,
+              count(average_ndvi) AS ndvi_observation_count,
+              count(average_ndbi) AS ndbi_observation_count,
+              count(DISTINCT capture_date) AS capture_count
             FROM latest_stats
             GROUP BY capture_date::date
             ORDER BY date
@@ -1466,11 +1470,23 @@ def get_dashboard(
             },
         ).fetchall()
 
+    trend = [
+        row
+        for row in historical_trend
+        if start_date is None or row["date"] >= start_date
+    ]
+    temporal = build_temporal_analysis(
+        [dict(row) for row in historical_trend],
+        granularity=aggregation,
+        start_date=start_date,
+        end_date=end_date,
+    )
     return {
         "summary": summary,
         "lowest": lowest,
         "highest": highest,
         "trend": trend,
+        "temporal": temporal,
         "rainfall_area": rainfall_area,
         "rainfall_trend": rainfall_trend,
     }
