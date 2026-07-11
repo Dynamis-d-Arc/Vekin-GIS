@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -13,13 +14,15 @@ import rasterio
 from affine import Affine
 from pystac_client import Client
 from rasterio.enums import ColorInterp, Resampling
+from rasterio.mask import mask
 from rasterio.merge import merge
+from rasterio.transform import array_bounds
 from rasterio.warp import transform_geom
 from rasterstats import zonal_stats
 from pyproj import Geod
 from shapely.geometry import LineString, MultiLineString, box, mapping, shape
 
-from app.config import get_settings, population_year_time_ms
+from app.config import get_settings
 from app.repositories import ensure_grids_for_area, insert_context_statistics, upsert_context_layer
 
 
@@ -137,38 +140,52 @@ def _read_mosaic(
             dataset.close()
 
 
-def _read_worldpop_density(
+def _read_worldpop_population_count(
     *,
     bbox_values: tuple[float, float, float, float],
     output_path: Path,
-    time_ms: int | None = None,
+    year: int,
 ) -> tuple[np.ndarray, Affine, Any]:
     settings = get_settings()
-    west, south, east, north = bbox_values
-    width_degrees = max(east - west, 0.0001)
-    height_degrees = max(north - south, 0.0001)
-    pixel_size = 0.0008333314043231382
-    width = min(MAX_OVERLAY_PIXELS, max(1, round(width_degrees / pixel_size)))
-    height = min(MAX_OVERLAY_PIXELS, max(1, round(height_degrees / pixel_size)))
-    params = {
-        "bbox": ",".join(str(value) for value in bbox_values),
-        "bboxSR": 4326,
-        "imageSR": 4326,
-        "size": f"{width},{height}",
-        "format": "tiff",
-        "pixelType": "F32",
-        "time": time_ms if time_ms is not None else settings.worldpop_population_time_ms,
-        "f": "image",
-    }
-    url = f"{settings.worldpop_population_density_url}?{urlencode(params)}"
-    urlretrieve(url, output_path)
+    if not output_path.exists():
+        source_url = settings.worldpop_population_url_template.format(year=year)
+        source_path = settings.context_temp_dir / f"worldpop-thailand-{year}.tif"
+        if not source_path.exists():
+            partial_path = source_path.with_suffix(".tif.part")
+            urlretrieve(source_url, partial_path)
+            partial_path.replace(source_path)
+        crop_geometry = mapping(box(*bbox_values))
+        with rasterio.open(source_path) as source:
+            cropped, cropped_transform = mask(
+                source,
+                [crop_geometry],
+                crop=True,
+                filled=True,
+                nodata=np.nan,
+                all_touched=True,
+            )
+            profile = source.profile.copy()
+            profile.update(
+                driver="GTiff",
+                height=cropped.shape[1],
+                width=cropped.shape[2],
+                count=1,
+                dtype="float32",
+                transform=cropped_transform,
+                nodata=np.nan,
+                compress="deflate",
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with rasterio.open(output_path, "w", **profile) as target:
+                target.write(cropped[0].astype("float32"), 1)
+
     with rasterio.open(output_path) as dataset:
         return dataset.read(1), dataset.transform, dataset.crs
 
 
 def _worldpop_years() -> list[int]:
     settings = get_settings()
-    return _configured_years(settings.worldpop_population_years, [2020])
+    return _configured_years(settings.worldpop_population_years, list(range(2015, 2031)))
 
 
 def _land_cover_years() -> list[int]:
@@ -309,7 +326,7 @@ def _context_grid_statistics(
     dem_transform: Affine,
     dem_crs: Any,
     land_cover_by_year: dict[int, tuple[np.ndarray, Affine, Any]],
-    population_density_by_year: dict[int, tuple[np.ndarray, Affine, Any]],
+    population_count_by_year: dict[int, tuple[np.ndarray, Affine, Any]],
     road_lines: list[LineString] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     grids = ensure_grids_for_area(area_geojson)
@@ -357,24 +374,37 @@ def _context_grid_statistics(
         else [{} for _ in grids]
     )
     population_stats_by_year: dict[int, list[dict[str, Any] | None]] = {}
+    population_pixel_area_by_year: dict[int, float] = {}
     for population_year, (
-        population_density,
-        population_density_transform,
-        population_density_crs,
-    ) in population_density_by_year.items():
+        population_count_raster,
+        population_transform,
+        population_crs,
+    ) in population_count_by_year.items():
         population_geometries = [
-            transform_geom("EPSG:4326", population_density_crs, grid["geometry"])
-            if population_density_crs
+            transform_geom("EPSG:4326", population_crs, grid["geometry"])
+            if population_crs
             else grid["geometry"]
             for grid in grids
         ]
         population_stats_by_year[population_year] = zonal_stats(
             population_geometries,
-            population_density.astype("float32"),
-            affine=population_density_transform,
+            population_count_raster.astype("float32"),
+            affine=population_transform,
             stats=["mean"],
             geojson_out=False,
-            nodata=-3.402823e38,
+            nodata=np.nan,
+            all_touched=True,
+        )
+        raster_bounds = array_bounds(
+            population_count_raster.shape[0],
+            population_count_raster.shape[1],
+            population_transform,
+        )
+        raster_area_square_meters = _geometry_area_square_meters(
+            mapping(box(*raster_bounds))
+        )
+        population_pixel_area_by_year[population_year] = (
+            raster_area_square_meters / population_count_raster.size
         )
     latest_population_year = max(population_stats_by_year, default=None)
     population_stats = (
@@ -427,32 +457,37 @@ def _context_grid_statistics(
             if total
             else None
         )
-        population_density_mean = (
-            _clean_float(population_stat.get("mean"))
-            if population_stat
+        latest_population_mean = (
+            _clean_float(population_stat.get("mean")) if population_stat else None
+        )
+        latest_population_pixel_area = (
+            population_pixel_area_by_year.get(latest_population_year)
+            if latest_population_year is not None
             else None
         )
         population_count = (
-            round(population_density_mean * grid_area_square_meters / 1_000_000, 2)
-            if population_density_mean is not None
+            round(latest_population_mean * grid_area_square_meters / latest_population_pixel_area, 2)
+            if latest_population_mean is not None
+            and latest_population_pixel_area is not None
+            and latest_population_pixel_area > 0
             else None
         )
         for population_year, year_stats in population_stats_by_year.items():
             year_stat = year_stats[grid_index]
-            year_density_mean = (
-                _clean_float(year_stat.get("mean"))
-                if year_stat
-                else None
-            )
+            year_population_mean = _clean_float(year_stat.get("mean")) if year_stat else None
+            year_pixel_area = population_pixel_area_by_year.get(population_year)
             population_rows.append(
                 {
                     "grid_id": grid["grid_id"],
                     "population_year": population_year,
-                    "population_count": (
-                        round(year_density_mean * grid_area_square_meters / 1_000_000, 2)
-                        if year_density_mean is not None
-                        else None
-                    ),
+                    "population_count": round(
+                        year_population_mean * grid_area_square_meters / year_pixel_area,
+                        2,
+                    )
+                    if year_population_mean is not None
+                    and year_pixel_area is not None
+                    and year_pixel_area > 0
+                    else None,
                 }
             )
         road_density = _road_density_km_per_square_km(
@@ -549,17 +584,27 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     if not land_cover_path.exists():
         _rgba_png(land_cover_path, _land_cover_rgba(land_cover_overlay_by_year[latest_land_cover_year]))
 
-    population_density_by_year: dict[int, tuple[np.ndarray, Affine, Any]] = {}
-    for population_year in population_years:
-        population_density_path = settings.context_temp_dir / f"{key}-population-density-{population_year}.tif"
-        try:
-            population_density_by_year[population_year] = _read_worldpop_density(
-                bbox_values=bbox_values,
-                output_path=population_density_path,
-                time_ms=population_year_time_ms(population_year),
-            )
-        except Exception:
-            continue
+    population_count_by_year: dict[int, tuple[np.ndarray, Affine, Any]] = {}
+
+    def read_population_year(population_year: int) -> tuple[np.ndarray, Affine, Any]:
+        population_count_path = settings.context_temp_dir / f"{key}-population-count-v2-{population_year}.tif"
+        return _read_worldpop_population_count(
+            bbox_values=bbox_values,
+            output_path=population_count_path,
+            year=population_year,
+        )
+
+    with ThreadPoolExecutor(max_workers=min(4, len(population_years))) as executor:
+        futures = {
+            executor.submit(read_population_year, population_year): population_year
+            for population_year in population_years
+        }
+        for future in as_completed(futures):
+            population_year = futures[future]
+            try:
+                population_count_by_year[population_year] = future.result()
+            except Exception:
+                continue
 
     road_lines = None
     try:
@@ -582,7 +627,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         dem_transform=dem_transform,
         dem_crs=dem_crs,
         land_cover_by_year=land_cover_by_year,
-        population_density_by_year=population_density_by_year,
+        population_count_by_year=population_count_by_year,
         road_lines=road_lines,
     )
     insert_context_statistics(
@@ -599,7 +644,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         "land_cover_statistics_count": len(land_cover_rows),
         "urban_context_statistics_count": len(urban_context_rows),
         "population_statistics_count": len(population_rows),
-        "population_years": sorted(population_density_by_year),
+        "population_years": sorted(population_count_by_year),
         "land_cover_years": sorted(land_cover_by_year),
         "land_cover_year": latest_land_cover_year,
         "bounds": [[south, west], [north, east]],

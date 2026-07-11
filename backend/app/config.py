@@ -1,5 +1,4 @@
 from functools import lru_cache
-from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,12 +16,12 @@ class Settings(BaseSettings):
     context_temp_dir: Path = Path("tmp/context")
     context_statistics_schema: str | None = None
     context_statistics_schema_reference_table: str = "BKK_TMD_WEATHER_DATA"
-    worldpop_population_density_url: str = (
-        "https://worldpop.arcgis.com/arcgis/rest/services/"
-        "WorldPop_Population_Density_100m/ImageServer/exportImage"
+    worldpop_population_url_template: str = (
+        "https://data.worldpop.org/GIS/Population/Global_2015_2030/"
+        "R2025A/{year}/THA/v1/1km_ua/constrained/"
+        "tha_pop_{year}_CN_1km_R2025A_UA_v1.tif"
     )
-    worldpop_population_time_ms: int = 1577836800000
-    worldpop_population_years: str = "2020,2021,2022,2023,2024"
+    worldpop_population_years: str = ",".join(str(year) for year in range(2015, 2031))
     land_cover_years: str = "2020,2021"
     overpass_api_url: str = "https://overpass-api.de/api/interpreter"
     overpass_timeout_seconds: int = 45
@@ -41,7 +40,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
-
-def population_year_time_ms(year: int) -> int:
-    return int(datetime(year, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)

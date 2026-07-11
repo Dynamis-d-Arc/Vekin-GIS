@@ -784,6 +784,35 @@ function renderDetailNdviTrendChart(rows) {
   });
 }
 
+function renderDetailNdbiTrendChart(rows) {
+  const points = rows
+    .map((row) => ({
+      label: row.date,
+      value: Number(row.average_ndbi),
+    }))
+    .filter((row) => Number.isFinite(row.value));
+
+  renderDetailChart("analysis-ndbi-chart", {
+    type: "line",
+    data: {
+      labels: points.map((point) => point.label),
+      datasets: [
+        {
+          label: "Average NDBI",
+          data: points.map((point) => point.value),
+          borderColor: "#67e8f9",
+          backgroundColor: "rgba(103, 232, 249, 0.2)",
+          fill: true,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          tension: 0.32,
+        },
+      ],
+    },
+    options: detailChartBaseOptions(),
+  });
+}
+
 function renderDetailLandCoverChart(percentages = {}, trendRows = selectedLandCoverTrendRows) {
   const yearlyRows = (trendRows || []).filter((row) => row.land_cover_year && row.class_percentages);
   if (yearlyRows.length > 1) {
@@ -1007,21 +1036,23 @@ function renderMiniLineChart(id, rows, valueKey, color = "#a3e635") {
 
   const width = 260;
   const height = 76;
-  const padding = 10;
+  const horizontalPadding = 10;
+  const topPadding = 8;
+  const chartBottom = 56;
   const values = points.map((point) => point.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
   const span = max - min || 1;
-  const step = (width - padding * 2) / Math.max(points.length - 1, 1);
+  const step = (width - horizontalPadding * 2) / Math.max(points.length - 1, 1);
   const coordinates = points.map((point, index) => {
-    const x = padding + index * step;
-    const y = height - padding - ((point.value - min) / span) * (height - padding * 2);
+    const x = horizontalPadding + index * step;
+    const y = chartBottom - ((point.value - min) / span) * (chartBottom - topPadding);
     return { ...point, x, y };
   });
   const path = coordinates
     .map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
     .join(" ");
-  const area = `${path} L${coordinates.at(-1).x.toFixed(1)} ${height - padding} L${padding} ${height - padding} Z`;
+  const area = `${path} L${coordinates.at(-1).x.toFixed(1)} ${chartBottom} L${horizontalPadding} ${chartBottom} Z`;
   const circles = coordinates
     .map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="2.3"><title>${point.label}: ${formatNumber(point.value)}</title></circle>`)
     .join("");
@@ -1031,6 +1062,10 @@ function renderMiniLineChart(id, rows, valueKey, color = "#a3e635") {
       <path d="${area}" fill="${color}" opacity="0.14"></path>
       <path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
       <g fill="${color}">${circles}</g>
+      <g fill="rgba(207, 250, 254, 0.65)" font-size="8" font-weight="700">
+        <text x="${horizontalPadding}" y="72" text-anchor="start">${formatShortDate(points[0].label)}</text>
+        <text x="${width - horizontalPadding}" y="72" text-anchor="end">${formatShortDate(points.at(-1).label)}</text>
+      </g>
     </svg>
   `;
 }
@@ -1110,7 +1145,7 @@ function renderSelectedGridAnalysis(
   setText("analysis-ndvi-note", comparisonNote(properties.average_ndvi, ndviAverage));
   setText("analysis-green", formatOptionalPercent(properties.green_cover_percentage));
   setText("analysis-green-note", comparisonNote(properties.green_cover_percentage, greenAverage));
-  renderMiniLineChart("analysis-ndbi-chart", trendRows, "average_ndbi", "#67e8f9");
+  renderDetailNdbiTrendChart(trendRows);
   renderDetailNdviTrendChart(trendRows);
   renderDetailLandCoverChart(properties.land_cover_percentages, landCoverTrendRows);
   renderMiniComparisonChart("analysis-built-up-chart", properties.built_up_area_square_meters, builtUpTotal / Math.max(rows.length, 1), {

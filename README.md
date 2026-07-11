@@ -10,6 +10,7 @@ The platform does not keep a permanent Sentinel-2 archive. It queries cloud-host
 - FastAPI backend for STAC search, NDVI processing, and analytics APIs
 - Next.js App Router frontend with Leaflet and Chart.js
 - Microsoft Planetary Computer STAC as the preferred imagery source
+- WorldPop Global 2 R2025A 1 km annual population counts for Thailand (2015-2030)
 
 ## Quick Start
 
@@ -74,6 +75,10 @@ Use `scripts/demo-api.mjs` only for frontend demos. Real NDVI values require the
 - `GET /api/metadata` returns captured image metadata and processing status.
 - `GET /api/dashboard` returns average NDVI, min/max values, lowest/highest grids, and historical trend values.
 - `POST /api/change-detection` compares grid NDVI values between two dates.
+
+WorldPop years after the latest demographic inputs are modelled projections. Population GeoTIFFs
+are read on demand, cropped to the selected area, cached under `tmp/context`, and aggregated as
+people per WorldPop pixel rather than population density.
 
 ## Level 0 Portal Layers
 

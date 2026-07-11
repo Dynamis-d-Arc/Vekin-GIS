@@ -219,7 +219,7 @@ export default function MapPage() {
                       <span className={detailMetricLabelClass}>{label}</span>
                       <strong id={valueId} className={detailMetricValueClass}>0</strong>
                       <span id={noteId} className={detailMetricNoteClass}>No grid selected</span>
-                      {chartId === "analysis-land-cover-chart" ? (
+                      {chartId === "analysis-land-cover-chart" || chartId === "analysis-ndbi-chart" ? (
                         <div className="h-32 min-w-0">
                           <canvas id={chartId} />
                         </div>
