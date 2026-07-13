@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.context_layers import create_context_layers
 from app.db import close_pool, open_pool
 from app.ndvi import calculate_grid_statistics, generate_ndvi
+from app.openmeteo import fetch_open_meteo_daily_weather
 from app.rainfall import CHIRPS_SOURCE, calculate_rainfall_range
 from app.planetary import find_sentinel_item, find_sentinel_items_for_range
 from app.repositories import (
@@ -38,6 +39,8 @@ from app.schemas import (
     AreaDateRequest,
     ChangeDetectionRequest,
     ContextLayersRequest,
+    OpenMeteoWeatherRequest,
+    OpenMeteoWeatherResponse,
     ProcessRangeResponse,
     ProcessResponse,
     RainfallProcessResponse,
@@ -224,6 +227,19 @@ def process_rainfall_range(request: AreaDateRangeRequest) -> RainfallProcessResp
         average_rainfall_mm=average,
         cumulative_rainfall_mm=cumulative,
     )
+
+
+@app.post("/api/weather/open-meteo", response_model=OpenMeteoWeatherResponse)
+def open_meteo_weather(request: OpenMeteoWeatherRequest) -> dict[str, Any]:
+    try:
+        return fetch_open_meteo_daily_weather(
+            latitude=request.latitude,
+            longitude=request.longitude,
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/api/metadata")

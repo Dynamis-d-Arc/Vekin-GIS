@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     rainfall_temp_dir: Path = Path("tmp/rainfall")
     chirps_daily_base_url: str = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/tifs/p05"
     chirps_prelim_daily_base_url: str = "https://data.chc.ucsb.edu/products/CHIRPS-2.0/prelim/global_daily/tifs/p05"
+    open_meteo_archive_api_url: str = "https://archive-api.open-meteo.com/v1/archive"
     context_temp_dir: Path = Path("tmp/context")
     context_statistics_schema: str | None = None
     context_statistics_schema_reference_table: str = "BKK_TMD_WEATHER_DATA"

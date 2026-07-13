@@ -61,3 +61,32 @@ class RainfallProcessResponse(BaseModel):
     end_date: date
     average_rainfall_mm: float | None
     cumulative_rainfall_mm: float | None
+
+
+class OpenMeteoWeatherRequest(BaseModel):
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    start_date: date
+    end_date: date
+
+
+class OpenMeteoDailyWeather(BaseModel):
+    date: date
+    temperature_c: float | None
+    rainfall_mm: float | None
+
+
+class OpenMeteoWeatherResponse(BaseModel):
+    source: str
+    source_url: str
+    latitude: float
+    longitude: float
+    timezone: str | None
+    timezone_abbreviation: str | None
+    utc_offset_seconds: int | None
+    start_date: date
+    end_date: date
+    days_returned: int
+    average_temperature_c: float | None
+    cumulative_rainfall_mm: float | None
+    daily: list[OpenMeteoDailyWeather]

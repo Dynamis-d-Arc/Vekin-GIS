@@ -250,16 +250,21 @@ export default function MapPage() {
                     ["NDVI Trends", "analysis-ndvi", "analysis-ndvi-note", "analysis-ndvi-chart"],
                     ["Green Cover Trends", "analysis-green", "analysis-green-note", "analysis-green-chart"],
                     ["River Presence", "analysis-river", "analysis-river-note", "analysis-river-chart"],
+                    ["Open-Meteo Daily Temp", "analysis-weather-temp", "analysis-weather-temp-note", "analysis-weather-temp-chart"],
+                    ["Open-Meteo Daily Rainfall", "analysis-weather-rain", "analysis-weather-rain-note", "analysis-weather-rain-chart"],
+                    ["Open-Meteo Daily Rows", "analysis-weather-daily", "analysis-weather-daily-note", "analysis-weather-daily-chart"],
                   ].map(([label, valueId, noteId, chartId]) => (
                     <div className={detailMetricClass} key={valueId}>
                       <span className={detailMetricLabelClass}>{label}</span>
                       <strong id={valueId} className={detailMetricValueClass}>0</strong>
                       <span id={noteId} className={detailMetricNoteClass}>No grid selected</span>
-                      {chartId === "analysis-ndvi-chart" ? (
-                        <div className="h-32 min-w-0">
-                          <canvas id={chartId} />
-                        </div>
-                      ) : chartId === "analysis-green-chart" ? (
+                      {[
+                        "analysis-ndvi-chart",
+                        "analysis-green-chart",
+                        "analysis-weather-temp-chart",
+                        "analysis-weather-rain-chart",
+                        "analysis-weather-daily-chart",
+                      ].includes(chartId) ? (
                         <div className="h-32 min-w-0">
                           <canvas id={chartId} />
                         </div>

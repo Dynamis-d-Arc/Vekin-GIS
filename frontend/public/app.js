@@ -351,6 +351,7 @@ let selectedGridLayer = null;
 let changeDetectionLayer = null;
 let gridLayerRequestId = 0;
 let selectedGridTrendRequestId = 0;
+let selectedGridWeatherRequestId = 0;
 let currentGridFeatures = [];
 let selectedGridTrendRows = [];
 let selectedPopulationTrendRows = [];
@@ -387,6 +388,9 @@ function setSelectedBounds(bounds, options = {}) {
   updateBboxReadout();
   if (options.fit) {
     map.fitBounds(bounds, { padding: [24, 24] });
+  }
+  if (options.refreshWeather !== false) {
+    loadSelectedGridWeather(options.weatherLabel || "selected area");
   }
 }
 
@@ -457,7 +461,7 @@ map.on("click", (event) => {
     }
 
     const bounds = L.latLngBounds(firstCorner, event.latlng);
-    setSelectedBounds(bounds);
+    setSelectedBounds(bounds, { weatherLabel: "drawn area" });
     resetDrawMode();
     setStatus("Custom bounding box selected. Choose a date, then process NDVI.");
     return;
@@ -468,7 +472,7 @@ map.on("click", (event) => {
     [event.latlng.lat - delta, event.latlng.lng - delta],
     [event.latlng.lat + delta, event.latlng.lng + delta],
   ];
-  setSelectedBounds(bounds);
+  setSelectedBounds(bounds, { weatherLabel: "selected area" });
 });
 
 map.on("mousemove", (event) => {
@@ -490,7 +494,7 @@ document.getElementById("apply-bounds-button").addEventListener("click", () => {
   try {
     resetDrawMode();
     const bounds = parseBoundsText(value);
-    setSelectedBounds(bounds, { fit: true });
+    setSelectedBounds(bounds, { fit: true, weatherLabel: "custom bounds" });
     setStatus("Custom bounds applied. Press Process NDVI to calculate this area.");
   } catch (error) {
     setStatus(`Bounds error: ${error.message}`);
@@ -760,6 +764,13 @@ function renderDetailChart(id, config) {
     detailCharts[id] = new Chart(node, config);
   } catch (error) {
     console.error(`Unable to render ${id}`, error);
+  }
+}
+
+function clearDetailChart(id) {
+  if (detailCharts[id]) {
+    detailCharts[id].destroy();
+    delete detailCharts[id];
   }
 }
 
@@ -1182,6 +1193,175 @@ function renderSelectedGridAnalysis(
   });
 }
 
+function renderOpenMeteoWeather(weather) {
+  if (!weather || weather.error) {
+    setText("analysis-weather-temp", "0");
+    setText("analysis-weather-temp-note", weather?.error ? "Open-Meteo unavailable" : "Not processed yet");
+    setText("analysis-weather-rain", "0");
+    setText("analysis-weather-rain-note", weather?.error ? "Open-Meteo unavailable" : "Not processed yet");
+    setText("analysis-weather-daily", "0");
+    setText("analysis-weather-daily-note", weather?.error ? "Open-Meteo unavailable" : "Not processed yet");
+    ["analysis-weather-temp-chart", "analysis-weather-rain-chart", "analysis-weather-daily-chart"].forEach(clearDetailChart);
+    return;
+  }
+
+  const rows = Array.isArray(weather.daily) ? weather.daily : [];
+  const latest = rows.at(-1) || {};
+  const latestTemperature = Number(latest.temperature_c);
+  const latestRainfall = Number(latest.rainfall_mm);
+  const dayLabel = `${weather.days_returned} day${weather.days_returned === 1 ? "" : "s"}`;
+  setText("analysis-weather-temp", Number.isFinite(latestTemperature) ? `${latestTemperature.toFixed(1)} C` : "--");
+  setText("analysis-weather-temp-note", latest.date ? `Latest daily value: ${latest.date}` : `${dayLabel} from ${weather.source}`);
+  setText("analysis-weather-rain", Number.isFinite(latestRainfall) ? `${latestRainfall.toFixed(1)} mm` : "--");
+  setText("analysis-weather-rain-note", latest.date ? `Latest daily value: ${latest.date}` : `${weather.start_date} to ${weather.end_date}`);
+  setText("analysis-weather-daily", `${rows.length} rows`);
+  setText("analysis-weather-daily-note", `${weather.start_date} to ${weather.end_date}`);
+  renderOpenMeteoDailyCharts(rows);
+}
+
+function renderOpenMeteoDailyCharts(rows) {
+  const points = rows
+    .map((row) => ({
+      label: row.date,
+      temperature: Number(row.temperature_c),
+      rainfall: Number(row.rainfall_mm),
+    }))
+    .filter((row) => row.label && (Number.isFinite(row.temperature) || Number.isFinite(row.rainfall)));
+
+  if (!points.length) {
+    ["analysis-weather-temp-chart", "analysis-weather-rain-chart", "analysis-weather-daily-chart"].forEach(clearDetailChart);
+    return;
+  }
+
+  const labels = points.map((point) => point.label);
+  const temperatures = points.map((point) => (Number.isFinite(point.temperature) ? point.temperature : null));
+  const rainfall = points.map((point) => (Number.isFinite(point.rainfall) ? point.rainfall : null));
+
+  renderDetailChart("analysis-weather-temp-chart", {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Daily temperature C",
+          data: temperatures,
+          borderColor: "#fbbf24",
+          backgroundColor: "rgba(251, 191, 36, 0.18)",
+          fill: true,
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          tension: 0.32,
+        },
+      ],
+    },
+    options: detailChartBaseOptions({
+      scales: {
+        x: {
+          ticks: { color: detailChartPalette.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
+          grid: { display: false },
+        },
+        y: {
+          ticks: {
+            color: detailChartPalette.muted,
+            callback: (value) => `${value} C`,
+          },
+          grid: { color: "rgba(159, 199, 200, 0.18)" },
+        },
+      },
+    }),
+  });
+
+  renderDetailChart("analysis-weather-rain-chart", {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          label: "Daily rainfall mm",
+          data: rainfall,
+          backgroundColor: "rgba(103, 232, 249, 0.62)",
+          borderColor: "#67e8f9",
+          borderWidth: 1,
+          borderRadius: 5,
+        },
+      ],
+    },
+    options: detailChartBaseOptions({
+      scales: {
+        x: {
+          ticks: { color: detailChartPalette.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            color: detailChartPalette.muted,
+            callback: (value) => `${value} mm`,
+          },
+          grid: { color: "rgba(159, 199, 200, 0.18)" },
+        },
+      },
+    }),
+  });
+
+  renderDetailChart("analysis-weather-daily-chart", {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        {
+          type: "bar",
+          label: "Rainfall mm",
+          data: rainfall,
+          yAxisID: "rainfall",
+          backgroundColor: "rgba(103, 232, 249, 0.58)",
+          borderColor: "#67e8f9",
+          borderWidth: 1,
+          borderRadius: 5,
+        },
+        {
+          type: "line",
+          label: "Temperature C",
+          data: temperatures,
+          yAxisID: "temperature",
+          borderColor: "#fbbf24",
+          backgroundColor: "rgba(251, 191, 36, 0.16)",
+          pointRadius: 3,
+          pointHoverRadius: 5,
+          tension: 0.32,
+        },
+      ],
+    },
+    options: detailChartBaseOptions({
+      scales: {
+        x: {
+          ticks: { color: detailChartPalette.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
+          grid: { display: false },
+        },
+        rainfall: {
+          type: "linear",
+          position: "left",
+          beginAtZero: true,
+          ticks: {
+            color: detailChartPalette.muted,
+            callback: (value) => `${value} mm`,
+          },
+          grid: { color: "rgba(159, 199, 200, 0.18)" },
+        },
+        temperature: {
+          type: "linear",
+          position: "right",
+          ticks: {
+            color: detailChartPalette.muted,
+            callback: (value) => `${value} C`,
+          },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    }),
+  });
+}
+
 function renderGridDataValues(
   properties = {},
   trendRows = selectedGridTrendRows,
@@ -1249,6 +1429,38 @@ async function loadSelectedGridTrend(gridId, properties) {
   renderSelectedGridAnalysis(properties, selectedGridTrendRows, selectedPopulationTrendRows, selectedLandCoverTrendRows);
 }
 
+async function loadSelectedGridWeather(gridId) {
+  const requestId = ++selectedGridWeatherRequestId;
+  const { startDate, endDate } = getActiveDateRange();
+  if (!startDate || !endDate) {
+    renderOpenMeteoWeather(null);
+    return;
+  }
+
+  const bounds = getSelectedBounds();
+  if (!bounds) {
+    renderOpenMeteoWeather(null);
+    return;
+  }
+
+  setText("analysis-weather-temp", "Loading");
+  setText("analysis-weather-temp-note", `Open-Meteo for ${gridId}`);
+  setText("analysis-weather-rain", "Loading");
+  setText("analysis-weather-rain-note", `${startDate} to ${endDate}`);
+  setText("analysis-weather-daily", "Loading");
+  setText("analysis-weather-daily-note", "Fetching daily rows");
+
+  try {
+    const weather = await fetchOpenMeteoWeather(bounds, startDate, endDate);
+    if (requestId !== selectedGridWeatherRequestId) return;
+    renderOpenMeteoWeather(weather);
+  } catch (error) {
+    if (requestId !== selectedGridWeatherRequestId) return;
+    renderOpenMeteoWeather({ error });
+    setStatus(`Selected ${gridId}, but Open-Meteo weather failed: ${error.message}`);
+  }
+}
+
 function popupContent(p) {
   return `
     <strong>${p.grid_id}</strong><br>
@@ -1282,7 +1494,8 @@ function selectGridFeature(feature, layer) {
   selectedGridLayer = layer;
   layer.setStyle(selectedGridStyle(feature));
   layer.bringToFront();
-  setSelectedBounds(layer.getBounds());
+  const gridBounds = layer.getBounds();
+  setSelectedBounds(gridBounds, { weatherLabel: feature.properties.grid_id });
   renderSelectedGridInfo(feature);
   loadSelectedGridTrend(feature.properties.grid_id, feature.properties).catch((error) => {
     setStatus(`Selected ${feature.properties.grid_id}, but trend charts failed: ${error.message}`);
@@ -1297,6 +1510,20 @@ async function fetchJson(path, options) {
     throw new Error(message);
   }
   return response.json();
+}
+
+async function fetchOpenMeteoWeather(bounds, startDate, endDate) {
+  const center = bounds.getCenter();
+  return fetchJson("/api/weather/open-meteo", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      latitude: center.lat,
+      longitude: center.lng,
+      start_date: startDate,
+      end_date: endDate,
+    }),
+  });
 }
 
 async function loadContextLayers(area) {
@@ -1554,6 +1781,10 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...payload, start_date: startDate, end_date: endDate }),
     }).catch((error) => ({ error }));
+    setStatus("Fetching Open-Meteo temperature and rainfall for the selected area...");
+    const openMeteo = await fetchOpenMeteoWeather(selectedBounds, startDate, endDate)
+      .catch((error) => ({ error }));
+    renderOpenMeteoWeather(openMeteo);
     setStatus("Loading DEM and land-cover context for the selected area...");
     const contextSucceeded = await loadContextLayers(payload.area)
       .then(() => true)
@@ -1568,7 +1799,10 @@ document.getElementById("process-form").addEventListener("submit", async (event)
     const rainfallStatus = rainfall.error
       ? ` CHIRPS rainfall skipped: ${rainfall.error.message}`
       : ` CHIRPS rainfall: ${rainfall.days_processed} days across ${rainfall.grid_rows_processed} grid/date rows.`;
-    setStatus(`${completion}${rainfallStatus}${suffix}`);
+    const openMeteoStatus = openMeteo.error
+      ? ` Open-Meteo skipped: ${openMeteo.error.message}`
+      : ` Open-Meteo: ${openMeteo.days_returned} daily weather rows loaded.`;
+    setStatus(`${completion}${rainfallStatus}${openMeteoStatus}${suffix}`);
     map.fitBounds(selectedBounds, { padding: [24, 24] });
   } catch (error) {
     setStatus(`Processing failed: ${error.message}`);
@@ -1639,12 +1873,12 @@ document.getElementById("search-button").addEventListener("click", async () => {
 
     if (bbox?.length === 4 && bbox.every(Number.isFinite)) {
       const [south, north, west, east] = bbox;
-      setSelectedBounds([[south, west], [north, east]], { fit: true });
+      setSelectedBounds([[south, west], [north, east]], { fit: true, weatherLabel: "search result" });
     } else {
       setSelectedBounds([
         [lat - 0.012, lon - 0.012],
         [lat + 0.012, lon + 0.012],
-      ], { fit: true });
+      ], { fit: true, weatherLabel: "search result" });
     }
     setStatus(`Location selected: ${result.display_name || query}`);
   } catch (error) {
@@ -1669,6 +1903,9 @@ document.getElementById("apply-map-date-range").addEventListener("click", () => 
     return;
   }
   setActiveDateRange(range);
+  loadSelectedGridWeather("selected area").catch((error) => {
+    setStatus(`Date range weather refresh failed: ${error.message}`);
+  });
   setStatus("Applying date range to map and dashboard data...");
   refreshRangeFilteredMapData()
     .then(() => setStatus(`Showing processed grid data from ${range.startDate} to ${range.endDate}.`))
@@ -1679,6 +1916,9 @@ document.getElementById("apply-map-date-range").addEventListener("click", () => 
 document.getElementById("date").addEventListener("change", () => {
   syncDateRangeControls();
   saveActiveDateRange();
+  loadSelectedGridWeather("selected area").catch((error) => {
+    setStatus(`Date range weather refresh failed: ${error.message}`);
+  });
   refreshRangeFilteredMapData().catch((error) => {
     setStatus(`Date range refresh failed: ${error.message}`);
   });
@@ -1686,6 +1926,9 @@ document.getElementById("date").addEventListener("change", () => {
 document.getElementById("end-date").addEventListener("change", () => {
   syncDateRangeControls();
   saveActiveDateRange();
+  loadSelectedGridWeather("selected area").catch((error) => {
+    setStatus(`Date range weather refresh failed: ${error.message}`);
+  });
   refreshRangeFilteredMapData().catch((error) => {
     setStatus(`Date range refresh failed: ${error.message}`);
   });

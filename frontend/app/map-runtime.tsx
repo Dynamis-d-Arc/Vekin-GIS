@@ -56,7 +56,7 @@ function bootMap() {
 
     return new Promise<void>((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = "/app.js";
+      script.src = `/app.js?v=${Date.now()}`;
       script.onload = () => resolve();
       script.onerror = () => reject(new Error("Unable to load the map runtime."));
       document.body.appendChild(script);

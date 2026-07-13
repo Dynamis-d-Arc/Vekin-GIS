@@ -73,6 +73,7 @@ Use `scripts/demo-api.mjs` only for frontend demos. Real NDVI values require the
 - `POST /api/ndvi/process` retrieves B04 and B08 on demand, generates a temporary NDVI GeoTIFF, calculates grid statistics, and stores metadata/statistics.
 - `GET /api/grids` returns Bangkok grid polygons with the latest NDVI values for map styling.
 - `GET /api/metadata` returns captured image metadata and processing status.
+- `POST /api/weather/open-meteo` retrieves Open-Meteo daily mean temperature and rainfall for a latitude/longitude date range.
 - `GET /api/dashboard` returns average NDVI, min/max values, lowest/highest grids, and historical trend values.
 - `POST /api/change-detection` compares grid NDVI values between two dates.
 
