@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     context_temp_dir: Path = Path("tmp/context")
     context_statistics_schema: str | None = None
     context_statistics_schema_reference_table: str = "BKK_TMD_WEATHER_DATA"
+    hydro_rivers_path: Path = Path("HydroRIVERS_v10")
     worldpop_population_url_template: str = (
         "https://data.worldpop.org/GIS/Population/Global_2015_2030/"
         "R2025A/{year}/THA/v1/1km_ua/constrained/"

@@ -249,6 +249,7 @@ export default function MapPage() {
                   {[
                     ["NDVI Trends", "analysis-ndvi", "analysis-ndvi-note", "analysis-ndvi-chart"],
                     ["Green Cover Trends", "analysis-green", "analysis-green-note", "analysis-green-chart"],
+                    ["River Presence", "analysis-river", "analysis-river-note", "analysis-river-chart"],
                   ].map(([label, valueId, noteId, chartId]) => (
                     <div className={detailMetricClass} key={valueId}>
                       <span className={detailMetricLabelClass}>{label}</span>

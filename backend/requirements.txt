@@ -11,4 +11,4 @@ shapely==2.0.6
 pyproj==3.7.0
 rasterstats==0.20.0
 geojson-pydantic==1.1.2
-
+fiona==1.10.1

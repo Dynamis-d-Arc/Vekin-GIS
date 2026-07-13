@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from rasterio.warp import transform_geom
 from rasterstats import zonal_stats
 from pyproj import Geod
 from shapely.geometry import LineString, MultiLineString, box, mapping, shape
+from shapely.geometry.base import BaseGeometry
 
 from app.config import get_settings
 from app.repositories import ensure_grids_for_area, insert_context_statistics, upsert_context_layer
@@ -35,6 +37,11 @@ ROAD_HIGHWAY_FILTER = (
     "motorway|trunk|primary|secondary|tertiary|unclassified|residential|"
     "motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|living_street|service"
 )
+
+try:
+    import fiona
+except ImportError:
+    fiona = None
 
 
 def _rgba_png(path: Path, rgba: np.ndarray) -> None:
@@ -319,6 +326,89 @@ def _road_density_km_per_square_km(
     return round((road_length_meters / 1000) / (grid_area_square_meters / 1_000_000), 3)
 
 
+def _line_geometries(geometry: BaseGeometry) -> list[LineString | MultiLineString]:
+    if geometry.is_empty:
+        return []
+    if isinstance(geometry, (LineString, MultiLineString)):
+        return [geometry]
+    return [
+        line
+        for part in getattr(geometry, "geoms", [])
+        for line in _line_geometries(part)
+    ]
+
+
+def _read_hydro_rivers(
+    bbox_values: tuple[float, float, float, float],
+) -> list[LineString | MultiLineString] | None:
+    settings = get_settings()
+    hydro_path = settings.hydro_rivers_path
+    if not hydro_path.exists() or fiona is None:
+        return None
+
+    hydro_source = str(_fiona_dataset_path(hydro_path, settings.context_temp_dir))
+    layers = fiona.listlayers(hydro_source)
+    if not layers:
+        return None
+
+    rivers: list[LineString | MultiLineString] = []
+    bbox_geometry = box(*bbox_values)
+    for layer_name in layers:
+        with fiona.open(hydro_source, layer=layer_name) as source:
+            for feature in source.filter(bbox=bbox_values):
+                if not feature.get("geometry"):
+                    continue
+                geometry = shape(feature["geometry"])
+                if not geometry.intersects(bbox_geometry):
+                    continue
+                rivers.extend(_line_geometries(geometry))
+        if rivers:
+            break
+    return rivers
+
+
+def _fiona_dataset_path(source_path: Path, temp_dir: Path) -> Path:
+    try:
+        fiona.listlayers(str(source_path))
+        return source_path
+    except Exception:
+        pass
+
+    if source_path.suffix.lower() == ".gdb":
+        return source_path
+
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    alias_path = temp_dir / f"{source_path.name}.gdb"
+    if not alias_path.exists():
+        try:
+            alias_path.symlink_to(source_path.resolve(), target_is_directory=True)
+        except OSError:
+            shutil.copytree(source_path, alias_path, dirs_exist_ok=True)
+    return alias_path
+
+
+def _river_statistics(
+    *,
+    grid_geometry_geojson: dict[str, Any],
+    river_lines: list[LineString | MultiLineString] | None,
+) -> tuple[bool | None, float | None]:
+    if river_lines is None:
+        return None, None
+
+    grid_geometry = shape(grid_geometry_geojson)
+    river_length_meters = 0.0
+    for river in river_lines:
+        if not river.intersects(grid_geometry):
+            continue
+        clipped = river.intersection(grid_geometry)
+        for line in _line_geometries(clipped):
+            river_length_meters += abs(GEOD.geometry_length(line))
+
+    if river_length_meters <= 0:
+        return False, 0.0
+    return True, round(river_length_meters / 1000, 3)
+
+
 def _context_grid_statistics(
     *,
     area_geojson: dict[str, Any],
@@ -328,6 +418,7 @@ def _context_grid_statistics(
     land_cover_by_year: dict[int, tuple[np.ndarray, Affine, Any]],
     population_count_by_year: dict[int, tuple[np.ndarray, Affine, Any]],
     road_lines: list[LineString] | None,
+    river_lines: list[LineString | MultiLineString] | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     grids = ensure_grids_for_area(area_geojson)
     if not grids:
@@ -495,6 +586,10 @@ def _context_grid_statistics(
             road_lines=road_lines,
             grid_area_square_meters=grid_area_square_meters,
         )
+        has_river, river_length_km = _river_statistics(
+            grid_geometry_geojson=grid["geometry"],
+            river_lines=river_lines,
+        )
         for land_cover_year, year_stats in land_cover_stats_by_year.items():
             year_stat = year_stats[grid_index]
             year_class_counts = {
@@ -522,6 +617,8 @@ def _context_grid_statistics(
                 "built_up_area_square_meters": built_up_area_square_meters,
                 "green_cover_percentage": green_cover_percentage,
                 "road_density_km_per_square_km": road_density,
+                "has_river": has_river,
+                "river_length_km": river_length_km,
             }
         )
 
@@ -612,6 +709,12 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         road_lines = None
 
+    river_lines = None
+    try:
+        river_lines = _read_hydro_rivers(bbox_values)
+    except Exception:
+        river_lines = None
+
     relative_dem_url = f"/context/{dem_path.name}"
     relative_land_cover_url = f"/context/{land_cover_path.name}"
     context_layer_id = upsert_context_layer(
@@ -629,6 +732,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         land_cover_by_year=land_cover_by_year,
         population_count_by_year=population_count_by_year,
         road_lines=road_lines,
+        river_lines=river_lines,
     )
     insert_context_statistics(
         context_layer_id=context_layer_id,

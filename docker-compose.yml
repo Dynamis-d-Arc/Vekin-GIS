@@ -30,6 +30,7 @@ services:
       - "8000:8000"
     volumes:
       - ./tmp:/app/tmp
+      - ./HydroRIVERS_v10:/app/HydroRIVERS_v10:ro
     depends_on:
       db:
         condition: service_healthy

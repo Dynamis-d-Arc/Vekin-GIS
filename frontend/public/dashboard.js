@@ -558,11 +558,13 @@ function renderOverview({ dashboard, grids, context }) {
       (row.population_count !== null && row.population_count !== undefined) ||
       (row.built_up_area_square_meters !== null && row.built_up_area_square_meters !== undefined) ||
       (row.green_cover_percentage !== null && row.green_cover_percentage !== undefined) ||
-      (row.road_density_km_per_square_km !== null && row.road_density_km_per_square_km !== undefined),
+      (row.road_density_km_per_square_km !== null && row.road_density_km_per_square_km !== undefined) ||
+      (row.has_river !== null && row.has_river !== undefined),
   ).length;
   const roadCount = properties.filter(
     (row) => row.road_density_km_per_square_km !== null && row.road_density_km_per_square_km !== undefined,
   ).length;
+  const riverCount = properties.filter((row) => row.has_river === true).length;
   const populationTotal = sumFinite(contextRows.map((row) => row.population_count));
   const builtUpTotal = sumFinite(contextRows.map((row) => row.built_up_area_square_meters));
   const roadDensityAverage = averageFinite(contextRows.map((row) => row.road_density_km_per_square_km));
@@ -575,6 +577,7 @@ function renderOverview({ dashboard, grids, context }) {
   document.getElementById("ndvi-grids").textContent = formatCompactNumber(ndviCount);
   document.getElementById("context-grids").textContent = formatCompactNumber(contextCount);
   document.getElementById("road-grids").textContent = formatCompactNumber(roadCount);
+  document.getElementById("river-grids").textContent = formatCompactNumber(riverCount);
   document.getElementById("dashboard-avg-ndvi").textContent = formatNumber(dashboard.summary.average_ndvi);
   document.getElementById("dashboard-avg-rainfall").textContent = formatMillimeters(rainfallAverage);
   document.getElementById("dashboard-rainfall-total").textContent = rainfallRows.length ? formatMillimeters(rainfallTotal) : "--";
@@ -608,6 +611,8 @@ function renderGridTable() {
       <td>${formatSquareKilometers(row.built_up_area_square_meters)}</td>
       <td>${row.green_cover_percentage === null || row.green_cover_percentage === undefined ? "--" : `${formatNumber(row.green_cover_percentage)}%`}</td>
       <td>${formatNumber(row.road_density_km_per_square_km)}</td>
+      <td>${row.has_river === true ? "Yes" : row.has_river === false ? "No" : "--"}</td>
+      <td>${formatNumber(row.river_length_km)}</td>
       <td>${formatNumber(row.average_elevation)}</td>
       <td>${formatNumber(row.minimum_elevation)}</td>
       <td>${formatNumber(row.maximum_elevation)}</td>

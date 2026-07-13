@@ -106,9 +106,18 @@ BEGIN
       built_up_area_square_meters double precision,
       green_cover_percentage double precision,
       road_density_km_per_square_km double precision,
+      has_river boolean,
+      river_length_km double precision,
       created_at timestamptz NOT NULL DEFAULT now(),
       UNIQUE (grid_id, context_layer_id)
     )',
+    stats_schema
+  );
+
+  EXECUTE format(
+    'ALTER TABLE %I.urban_context_statistics
+      ADD COLUMN IF NOT EXISTS has_river boolean,
+      ADD COLUMN IF NOT EXISTS river_length_km double precision',
     stats_schema
   );
 

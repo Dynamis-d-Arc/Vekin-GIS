@@ -134,6 +134,12 @@ function formatOptionalPercent(value) {
     : `${formatNumber(value)}%`;
 }
 
+function formatRiverPresence(value) {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  return "--";
+}
+
 function averageFinite(values) {
   const finite = values.map(Number).filter(Number.isFinite);
   if (!finite.length) return null;
@@ -390,11 +396,13 @@ function getSelectedBounds() {
 
 function parseBoundsText(value) {
   const normalized = value.trim();
-  const labeledMatch = normalized.match(
-    /W\s*(-?\d+(?:\.\d+)?).*?S\s*(-?\d+(?:\.\d+)?).*?E\s*(-?\d+(?:\.\d+)?).*?N\s*(-?\d+(?:\.\d+)?)/i,
-  );
-  const values = labeledMatch
-    ? labeledMatch.slice(1).map(Number)
+  const labeledValues = {};
+  for (const match of normalized.matchAll(/\b([WSEN])\s*[:=]?\s*(-?\d+(?:\.\d+)?)/gi)) {
+    labeledValues[match[1].toUpperCase()] = Number(match[2]);
+  }
+  const hasAllLabels = ["W", "S", "E", "N"].every((label) => Number.isFinite(labeledValues[label]));
+  const values = hasAllLabels
+    ? [labeledValues.W, labeledValues.S, labeledValues.E, labeledValues.N]
     : normalized.match(/-?\d+(?:\.\d+)?/g)?.slice(0, 4).map(Number);
 
   if (!values || values.length !== 4 || values.some((number) => !Number.isFinite(number))) {
@@ -1145,6 +1153,13 @@ function renderSelectedGridAnalysis(
   setText("analysis-ndvi-note", comparisonNote(properties.average_ndvi, ndviAverage));
   setText("analysis-green", formatOptionalPercent(properties.green_cover_percentage));
   setText("analysis-green-note", comparisonNote(properties.green_cover_percentage, greenAverage));
+  setText("analysis-river", formatRiverPresence(properties.has_river));
+  setText(
+    "analysis-river-note",
+    properties.river_length_km === null || properties.river_length_km === undefined
+      ? "HydroRIVERS data unavailable for this grid"
+      : `${formatOptionalNumber(properties.river_length_km)} km intersects this grid`,
+  );
   renderDetailNdbiTrendChart(trendRows);
   renderDetailNdviTrendChart(trendRows);
   renderDetailLandCoverChart(properties.land_cover_percentages, landCoverTrendRows);
@@ -1183,6 +1198,8 @@ function renderGridDataValues(
   setText("grid-built-up", formatOptionalSquareKilometers(properties.built_up_area_square_meters));
   setText("grid-green", formatOptionalNumber(properties.green_cover_percentage));
   setText("grid-road", formatOptionalNumber(properties.road_density_km_per_square_km));
+  setText("grid-river", formatRiverPresence(properties.has_river));
+  setText("grid-river-length", formatOptionalNumber(properties.river_length_km));
   setText("grid-elev-avg", formatOptionalNumber(properties.average_elevation));
   setText("grid-elev-min", formatOptionalNumber(properties.minimum_elevation));
   setText("grid-elev-max", formatOptionalNumber(properties.maximum_elevation));
@@ -1242,6 +1259,7 @@ function popupContent(p) {
     Built-up area: ${formatSquareKilometers(p.built_up_area_square_meters)} sq km<br>
     Green cover: ${formatNumber(p.green_cover_percentage)}%<br>
     Road density: ${formatNumber(p.road_density_km_per_square_km)} km/sq km<br>
+    River: ${formatRiverPresence(p.has_river)} (${formatNumber(p.river_length_km)} km)<br>
     Date: ${p.capture_date || "No data"}
   `;
 }

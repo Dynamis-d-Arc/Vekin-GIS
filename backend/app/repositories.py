@@ -247,9 +247,20 @@ def ensure_context_statistics_tables() -> None:
               built_up_area_square_meters double precision,
               green_cover_percentage double precision,
               road_density_km_per_square_km double precision,
+              has_river boolean,
+              river_length_km double precision,
               created_at timestamptz NOT NULL DEFAULT now(),
               UNIQUE (grid_id, context_layer_id)
             )
+            """
+            ).format(_stats_table(stats_schema, "urban_context_statistics"))
+        )
+        conn.execute(
+            sql.SQL(
+                """
+            ALTER TABLE {}
+              ADD COLUMN IF NOT EXISTS has_river boolean,
+              ADD COLUMN IF NOT EXISTS river_length_km double precision
             """
             ).format(_stats_table(stats_schema, "urban_context_statistics"))
         )
@@ -726,7 +737,9 @@ def insert_context_statistics(
                       population_count,
                       built_up_area_square_meters,
                       green_cover_percentage,
-                      road_density_km_per_square_km
+                      road_density_km_per_square_km,
+                      has_river,
+                      river_length_km
                     )
                     VALUES (
                       %(grid_id)s,
@@ -734,14 +747,18 @@ def insert_context_statistics(
                       %(population_count)s,
                       %(built_up_area_square_meters)s,
                       %(green_cover_percentage)s,
-                      %(road_density_km_per_square_km)s
+                      %(road_density_km_per_square_km)s,
+                      %(has_river)s,
+                      %(river_length_km)s
                     )
                     ON CONFLICT (grid_id, context_layer_id)
                     DO UPDATE SET
                       population_count = EXCLUDED.population_count,
                       built_up_area_square_meters = EXCLUDED.built_up_area_square_meters,
                       green_cover_percentage = EXCLUDED.green_cover_percentage,
-                      road_density_km_per_square_km = EXCLUDED.road_density_km_per_square_km
+                      road_density_km_per_square_km = EXCLUDED.road_density_km_per_square_km,
+                      has_river = EXCLUDED.has_river,
+                      river_length_km = EXCLUDED.river_length_km
                     """
                     ).format(_stats_table(stats_schema, "urban_context_statistics")),
                     [{**row, "context_layer_id": context_layer_id} for row in urban_context_rows],
@@ -791,12 +808,20 @@ def ensure_grids_for_area(
               SELECT (ST_SquareGrid(%(grid_size)s, geom)).geom AS geom
               FROM metric_input
             ),
-            clipped AS (
+            grid_clipped AS (
               SELECT
                 ST_Multi(ST_Transform(ST_Intersection(cells.geom, metric_input.geom), 4326)) AS geometry
               FROM cells
               CROSS JOIN metric_input
               WHERE ST_Intersects(cells.geom, metric_input.geom)
+            ),
+            clipped AS (
+              SELECT geometry
+              FROM grid_clipped
+              UNION ALL
+              SELECT ST_Multi(ST_Transform(geom, 4326)) AS geometry
+              FROM metric_input
+              WHERE NOT EXISTS (SELECT 1 FROM grid_clipped)
             ),
             polygons AS (
               SELECT
@@ -1006,7 +1031,9 @@ def get_grid_layer(
               ucs.population_count,
               ucs.built_up_area_square_meters,
               ucs.green_cover_percentage,
-              ucs.road_density_km_per_square_km
+              ucs.road_density_km_per_square_km,
+              ucs.has_river,
+              ucs.river_length_km
             FROM grids g
             LEFT JOIN LATERAL (
               SELECT *
@@ -1078,6 +1105,8 @@ def get_grid_layer(
                     "built_up_area_square_meters": row["built_up_area_square_meters"],
                     "green_cover_percentage": row["green_cover_percentage"],
                     "road_density_km_per_square_km": row["road_density_km_per_square_km"],
+                    "has_river": row["has_river"],
+                    "river_length_km": row["river_length_km"],
                 },
             }
             for row in rows
@@ -1181,6 +1210,8 @@ def get_latest_context_statistics() -> dict[str, Any]:
               built_up_area_square_meters,
               green_cover_percentage,
               road_density_km_per_square_km,
+              has_river,
+              river_length_km,
               created_at
             FROM {}
             WHERE context_layer_id = %s

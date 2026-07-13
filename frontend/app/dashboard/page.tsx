@@ -11,6 +11,7 @@ const metrics = [
   ["NDVI grids", "ndvi-grids", "with imagery stats"],
   ["Context grids", "context-grids", "with urban data"],
   ["Road density grids", "road-grids", "OSM-derived"],
+  ["River grids", "river-grids", "HydroRIVERS intersections"],
   ["Average NDVI", "dashboard-avg-ndvi", "latest aggregate"],
   ["Avg rainfall", "dashboard-avg-rainfall", "CHIRPS daily"],
   ["Cumulative rain", "dashboard-rainfall-total", "loaded date range"],
@@ -35,7 +36,7 @@ const charts = [
 
 const gridColumns = [
   "Grid ID", "NDVI", "NDBI", "Min", "Max", "Date", "Population",
-  "Built-up sq km", "Green %", "Road density", "Elevation avg",
+  "Built-up sq km", "Green %", "Road density", "River", "River km", "Elevation avg",
   "Elevation min", "Elevation max", "Land cover", "Cover mix",
 ];
 
