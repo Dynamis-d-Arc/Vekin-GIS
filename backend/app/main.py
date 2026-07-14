@@ -308,6 +308,7 @@ def context_layers(request: ContextLayersRequest) -> dict[str, Any]:
     return {
         **layers,
         "dem_url": f"{settings.api_public_base_url}{layers['dem_url']}",
+        "dem_terrain_url": f"{settings.api_public_base_url}{layers['dem_terrain_url']}",
         "land_cover_url": f"{settings.api_public_base_url}{layers['land_cover_url']}",
     }
 

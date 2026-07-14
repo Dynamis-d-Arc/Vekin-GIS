@@ -358,6 +358,7 @@ let selectedPopulationTrendRows = [];
 let selectedLandCoverTrendRows = [];
 const drawButton = document.getElementById("draw-box-button");
 const bboxLabel = document.getElementById("bbox-label");
+const view3dTerrainButton = document.getElementById("view-3d-terrain");
 
 function setStatus(message) {
   document.getElementById("status").textContent = message;
@@ -375,7 +376,36 @@ function updateBboxReadout() {
   bboxLabel.textContent = selectedArea ? formatBounds(selectedArea.getBounds()) : "No area selected";
 }
 
+function hide3dTerrainResult() {
+  view3dTerrainButton?.classList.add("hidden");
+  view3dTerrainButton?.removeAttribute("data-terrain-url");
+}
+
+function build3dTerrainUrl(bounds, options = {}) {
+  const params = new URLSearchParams({
+    west: bounds.getWest().toFixed(6),
+    south: bounds.getSouth().toFixed(6),
+    east: bounds.getEast().toFixed(6),
+    north: bounds.getNorth().toFixed(6),
+    label: options.label || "Processed selected area",
+  });
+  if (options.startDate) params.set("start_date", options.startDate);
+  if (options.endDate) params.set("end_date", options.endDate);
+  if (options.captureDate) params.set("capture_date", options.captureDate);
+  if (options.landCoverUrl) params.set("land_cover_url", options.landCoverUrl);
+  if (options.demUrl) params.set("dem_url", options.demUrl);
+  if (options.demTerrainUrl) params.set("dem_terrain_url", options.demTerrainUrl);
+  return `/3d-map?${params.toString()}`;
+}
+
+function show3dTerrainResult(bounds, options = {}) {
+  if (!view3dTerrainButton) return;
+  view3dTerrainButton.dataset.terrainUrl = build3dTerrainUrl(bounds, options);
+  view3dTerrainButton.classList.remove("hidden");
+}
+
 function setSelectedBounds(bounds, options = {}) {
+  hide3dTerrainResult();
   if (!selectedArea) {
     selectedArea = L.rectangle(bounds, {
       color: "#1b7f5a",
@@ -397,6 +427,15 @@ function setSelectedBounds(bounds, options = {}) {
 function getSelectedBounds() {
   return selectedArea ? selectedArea.getBounds() : null;
 }
+
+view3dTerrainButton?.addEventListener("click", () => {
+  const url = view3dTerrainButton.dataset.terrainUrl;
+  if (!url) {
+    setStatus("Process an area first, then open the 3D terrain result.");
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+});
 
 function parseBoundsText(value) {
   const normalized = value.trim();
@@ -1786,8 +1825,12 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       .catch((error) => ({ error }));
     renderOpenMeteoWeather(openMeteo);
     setStatus("Loading DEM and land-cover context for the selected area...");
+    let context = null;
     const contextSucceeded = await loadContextLayers(payload.area)
-      .then(() => true)
+      .then((result) => {
+        context = result;
+        return true;
+      })
       .catch(() => false);
     const displayCaptureDate = result.results.at(-1)?.capture_date;
     await Promise.all([loadGridLayer(displayCaptureDate), loadDashboard(), loadMetadata()]);
@@ -1802,6 +1845,15 @@ document.getElementById("process-form").addEventListener("submit", async (event)
     const openMeteoStatus = openMeteo.error
       ? ` Open-Meteo skipped: ${openMeteo.error.message}`
       : ` Open-Meteo: ${openMeteo.days_returned} daily weather rows loaded.`;
+    show3dTerrainResult(selectedBounds, {
+      startDate,
+      endDate,
+      captureDate: displayCaptureDate,
+      landCoverUrl: context?.land_cover_url,
+      demUrl: context?.dem_url,
+      demTerrainUrl: context?.dem_terrain_url,
+      label: isRange ? "Processed date range" : `Processed ${displayCaptureDate || startDate}`,
+    });
     setStatus(`${completion}${rainfallStatus}${openMeteoStatus}${suffix}`);
     map.fitBounds(selectedBounds, { padding: [24, 24] });
   } catch (error) {

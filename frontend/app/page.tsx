@@ -167,6 +167,15 @@ export default function MapPage() {
                 <TextInput className={inputClass} sizing="sm" id="cloud" type="number" min="0" max="100" defaultValue="40" />
               </div>
               <Button className={buttonClass} color="green" size="sm" type="submit">Process Grid</Button>
+              <Button
+                className={`${secondaryButtonClass} hidden`}
+                color="alternative"
+                id="view-3d-terrain"
+                size="sm"
+                type="button"
+              >
+                View 3D terrain
+              </Button>
               <p id="status" className="m-0 text-sm leading-snug text-cyan-100/75">
                 Select an area, choose a date range, then process.
               </p>

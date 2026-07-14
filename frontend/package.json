@@ -8,9 +8,13 @@
     "start": "next start"
   },
   "dependencies": {
+    "@deck.gl/layers": "^9.3.6",
+    "@deck.gl/mapbox": "^9.3.6",
+    "cesium": "^1.143.0",
     "chart.js": "^4.5.0",
     "flowbite-react": "^0.12.17",
     "leaflet": "^1.9.4",
+    "maplibre-gl": "^5.24.0",
     "next": "^16.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
