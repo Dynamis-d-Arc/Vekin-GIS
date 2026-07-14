@@ -359,6 +359,8 @@ let selectedLandCoverTrendRows = [];
 const drawButton = document.getElementById("draw-box-button");
 const bboxLabel = document.getElementById("bbox-label");
 const view3dTerrainButton = document.getElementById("view-3d-terrain");
+const view3dGridButton = document.getElementById("view-3d-grid");
+let latest3dContext = null;
 
 function setStatus(message) {
   document.getElementById("status").textContent = message;
@@ -381,14 +383,31 @@ function hide3dTerrainResult() {
   view3dTerrainButton?.removeAttribute("data-terrain-url");
 }
 
+function hide3dGridResult() {
+  view3dGridButton?.classList.add("hidden");
+  view3dGridButton?.removeAttribute("data-terrain-url");
+}
+
+function contextBoundsToLeafletBounds(bounds) {
+  if (!Array.isArray(bounds) || bounds.length < 2) return null;
+  return L.latLngBounds(bounds);
+}
+
+function appendBoundsParams(params, bounds, prefix = "") {
+  params.set(`${prefix}west`, bounds.getWest().toFixed(6));
+  params.set(`${prefix}south`, bounds.getSouth().toFixed(6));
+  params.set(`${prefix}east`, bounds.getEast().toFixed(6));
+  params.set(`${prefix}north`, bounds.getNorth().toFixed(6));
+}
+
 function build3dTerrainUrl(bounds, options = {}) {
   const params = new URLSearchParams({
-    west: bounds.getWest().toFixed(6),
-    south: bounds.getSouth().toFixed(6),
-    east: bounds.getEast().toFixed(6),
-    north: bounds.getNorth().toFixed(6),
     label: options.label || "Processed selected area",
   });
+  appendBoundsParams(params, bounds);
+  if (options.overlayBounds) {
+    appendBoundsParams(params, options.overlayBounds, "overlay_");
+  }
   if (options.startDate) params.set("start_date", options.startDate);
   if (options.endDate) params.set("end_date", options.endDate);
   if (options.captureDate) params.set("capture_date", options.captureDate);
@@ -404,8 +423,28 @@ function show3dTerrainResult(bounds, options = {}) {
   view3dTerrainButton.classList.remove("hidden");
 }
 
+function show3dGridResult(feature, bounds) {
+  if (!view3dGridButton) return;
+  const properties = feature.properties || {};
+  const range = getActiveDateRange();
+  view3dGridButton.dataset.terrainUrl = build3dTerrainUrl(bounds, {
+    label: `Grid ${properties.grid_id || "selected"}`,
+    startDate: range.startDate,
+    endDate: range.endDate,
+    captureDate: properties.capture_date,
+    landCoverUrl: latest3dContext?.land_cover_url,
+    demUrl: latest3dContext?.dem_url,
+    demTerrainUrl: latest3dContext?.dem_terrain_url,
+    overlayBounds: contextBoundsToLeafletBounds(latest3dContext?.bounds),
+  });
+  view3dGridButton.classList.remove("hidden");
+}
+
 function setSelectedBounds(bounds, options = {}) {
-  hide3dTerrainResult();
+  if (options.clear3d !== false) {
+    hide3dTerrainResult();
+    hide3dGridResult();
+  }
   if (!selectedArea) {
     selectedArea = L.rectangle(bounds, {
       color: "#1b7f5a",
@@ -432,6 +471,15 @@ view3dTerrainButton?.addEventListener("click", () => {
   const url = view3dTerrainButton.dataset.terrainUrl;
   if (!url) {
     setStatus("Process an area first, then open the 3D terrain result.");
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+});
+
+view3dGridButton?.addEventListener("click", () => {
+  const url = view3dGridButton.dataset.terrainUrl;
+  if (!url) {
+    setStatus("Click a processed grid cell first, then open the selected grid in 3D.");
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
@@ -1534,7 +1582,8 @@ function selectGridFeature(feature, layer) {
   layer.setStyle(selectedGridStyle(feature));
   layer.bringToFront();
   const gridBounds = layer.getBounds();
-  setSelectedBounds(gridBounds, { weatherLabel: feature.properties.grid_id });
+  setSelectedBounds(gridBounds, { weatherLabel: feature.properties.grid_id, clear3d: false });
+  show3dGridResult(feature, gridBounds);
   renderSelectedGridInfo(feature);
   loadSelectedGridTrend(feature.properties.grid_id, feature.properties).catch((error) => {
     setStatus(`Selected ${feature.properties.grid_id}, but trend charts failed: ${error.message}`);
@@ -1571,6 +1620,7 @@ async function loadContextLayers(area) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ area }),
   });
+  latest3dContext = context;
   addContextLayers(context);
   return context;
 }
@@ -1615,10 +1665,17 @@ async function loadLatestSavedContextLayer() {
   addContextLayers({
     bounds,
     dem_url: latest.dem_url,
+    dem_terrain_url: latest.dem_terrain_url,
     land_cover_url: latest.land_cover_url,
   }, {
     replaceExisting: true,
   });
+  latest3dContext = {
+    bounds,
+    dem_url: latest.dem_url,
+    dem_terrain_url: latest.dem_terrain_url,
+    land_cover_url: latest.land_cover_url,
+  };
 }
 
 function getSelectedDate() {
@@ -1644,6 +1701,7 @@ async function loadGridLayer(captureDate = null) {
   selectedGridTrendRows = [];
   selectedPopulationTrendRows = [];
   selectedLandCoverTrendRows = [];
+  hide3dGridResult();
   if (overlays.Grids) {
     map.removeLayer(overlays.Grids);
     layerControl.removeLayer(overlays.Grids);

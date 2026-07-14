@@ -47,6 +47,10 @@ type TerrainRequest = {
   cameraHeight: number;
   label: string;
   hasBounds: boolean;
+  overlayWest: number;
+  overlaySouth: number;
+  overlayEast: number;
+  overlayNorth: number;
   landCoverUrl: string | null;
   demUrl: string | null;
   demTerrainUrl: string | null;
@@ -114,9 +118,16 @@ function terrainRequestFromUrl(): TerrainRequest {
   const south = finiteParam(params, "south");
   const east = finiteParam(params, "east");
   const north = finiteParam(params, "north");
+  const overlayWest = finiteParam(params, "overlay_west");
+  const overlaySouth = finiteParam(params, "overlay_south");
+  const overlayEast = finiteParam(params, "overlay_east");
+  const overlayNorth = finiteParam(params, "overlay_north");
   const hasBounds = [west, south, east, north].every((value) => value !== null)
     && west! < east!
     && south! < north!;
+  const hasOverlayBounds = [overlayWest, overlaySouth, overlayEast, overlayNorth].every((value) => value !== null)
+    && overlayWest! < overlayEast!
+    && overlaySouth! < overlayNorth!;
 
   if (hasBounds) {
     const width = east! - west!;
@@ -132,6 +143,10 @@ function terrainRequestFromUrl(): TerrainRequest {
       cameraHeight: clamp(span * 165000, 1400, 20000),
       label: params.get("label") || "Processed selected area",
       hasBounds,
+      overlayWest: hasOverlayBounds ? overlayWest! : west!,
+      overlaySouth: hasOverlayBounds ? overlaySouth! : south!,
+      overlayEast: hasOverlayBounds ? overlayEast! : east!,
+      overlayNorth: hasOverlayBounds ? overlayNorth! : north!,
       landCoverUrl: params.get("land_cover_url"),
       demUrl: params.get("dem_url"),
       demTerrainUrl: params.get("dem_terrain_url"),
@@ -148,6 +163,10 @@ function terrainRequestFromUrl(): TerrainRequest {
     cameraHeight: 4200,
     label: "Preview terrain",
     hasBounds: false,
+    overlayWest: hasOverlayBounds ? overlayWest! : DEFAULT_LONGITUDE - 0.04,
+    overlaySouth: hasOverlayBounds ? overlaySouth! : DEFAULT_LATITUDE - 0.03,
+    overlayEast: hasOverlayBounds ? overlayEast! : DEFAULT_LONGITUDE + 0.04,
+    overlayNorth: hasOverlayBounds ? overlayNorth! : DEFAULT_LATITUDE + 0.03,
     landCoverUrl: params.get("land_cover_url"),
     demUrl: params.get("dem_url"),
     demTerrainUrl: params.get("dem_terrain_url"),
@@ -421,10 +440,10 @@ export function ThreeDMapRuntime() {
             proxiedImageUrl(terrainRequest.landCoverUrl),
             {
               rectangle: Cesium.Rectangle.fromDegrees(
-                terrainRequest.west,
-                terrainRequest.south,
-                terrainRequest.east,
-                terrainRequest.north,
+                terrainRequest.overlayWest,
+                terrainRequest.overlaySouth,
+                terrainRequest.overlayEast,
+                terrainRequest.overlayNorth,
               ),
             },
           );

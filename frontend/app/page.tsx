@@ -195,6 +195,15 @@ export default function MapPage() {
               <span>Grid ID: <strong id="grid-id" className="font-extrabold text-lime-200">0</strong></span>
               <span>Date: <strong id="grid-date" className="font-extrabold text-lime-200">0</strong></span>
             </p>
+            <Button
+              className={`${secondaryButtonClass} mt-3 hidden`}
+              color="alternative"
+              id="view-3d-grid"
+              size="xs"
+              type="button"
+            >
+              View selected grid in 3D
+            </Button>
             <div className="mt-3 flex flex-wrap gap-2" role="tablist" aria-label="Selected grid analysis">
               {["Land Use", "Population", "Environment"].map((tab, index) => (
                 <Button
