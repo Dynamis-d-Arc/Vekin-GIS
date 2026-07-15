@@ -345,8 +345,11 @@ const layerControl = L.control.layers({ Streets: streets, Satellite: satellite }
 
 let selectedArea = null;
 let drawMode = false;
+let polygonDrawMode = false;
 let firstCorner = null;
+let polygonPoints = [];
 let previewArea = null;
+let previewPolygon = null;
 let selectedGridLayer = null;
 let changeDetectionLayer = null;
 let gridLayerRequestId = 0;
@@ -357,6 +360,7 @@ let selectedGridTrendRows = [];
 let selectedPopulationTrendRows = [];
 let selectedLandCoverTrendRows = [];
 const drawButton = document.getElementById("draw-box-button");
+const drawPolygonButton = document.getElementById("draw-polygon-button");
 const bboxLabel = document.getElementById("bbox-label");
 const view3dTerrainButton = document.getElementById("view-3d-terrain");
 const view3dGridButton = document.getElementById("view-3d-grid");
@@ -376,6 +380,10 @@ function formatBounds(bounds) {
 
 function updateBboxReadout() {
   bboxLabel.textContent = selectedArea ? formatBounds(selectedArea.getBounds()) : "No area selected";
+}
+
+function selectedBuildingType() {
+  return document.getElementById("building-type")?.value || "farm";
 }
 
 function hide3dTerrainResult() {
@@ -400,11 +408,18 @@ function appendBoundsParams(params, bounds, prefix = "") {
   params.set(`${prefix}north`, bounds.getNorth().toFixed(6));
 }
 
+function appendFootprintParams(params, geometry) {
+  if (!geometry) return;
+  params.set("footprint", JSON.stringify(geometry));
+}
+
 function build3dTerrainUrl(bounds, options = {}) {
   const params = new URLSearchParams({
     label: options.label || "Processed selected area",
+    building_type: options.buildingType || selectedBuildingType(),
   });
   appendBoundsParams(params, bounds);
+  appendFootprintParams(params, options.footprint);
   if (options.overlayBounds) {
     appendBoundsParams(params, options.overlayBounds, "overlay_");
   }
@@ -419,7 +434,11 @@ function build3dTerrainUrl(bounds, options = {}) {
 
 function show3dTerrainResult(bounds, options = {}) {
   if (!view3dTerrainButton) return;
-  view3dTerrainButton.dataset.terrainUrl = build3dTerrainUrl(bounds, options);
+  view3dTerrainButton.dataset.terrainUrl = build3dTerrainUrl(bounds, {
+    ...options,
+    footprint: options.footprint || getSelectedGeometry(),
+    buildingType: options.buildingType || selectedBuildingType(),
+  });
   view3dTerrainButton.classList.remove("hidden");
 }
 
@@ -436,11 +455,13 @@ function show3dGridResult(feature, bounds) {
     demUrl: latest3dContext?.dem_url,
     demTerrainUrl: latest3dContext?.dem_terrain_url,
     overlayBounds: contextBoundsToLeafletBounds(latest3dContext?.bounds),
+    footprint: feature.geometry,
   });
   view3dGridButton.classList.remove("hidden");
 }
 
 function setSelectedBounds(bounds, options = {}) {
+  polygonPoints = [];
   if (options.clear3d !== false) {
     hide3dTerrainResult();
     hide3dGridResult();
@@ -463,8 +484,61 @@ function setSelectedBounds(bounds, options = {}) {
   }
 }
 
+function setSelectedPolygon(latlngs, options = {}) {
+  if (latlngs.length < 3) return;
+  if (options.clear3d !== false) {
+    hide3dTerrainResult();
+    hide3dGridResult();
+  }
+  if (selectedArea) {
+    map.removeLayer(selectedArea);
+  }
+  selectedArea = L.polygon(latlngs, {
+    color: "#1b7f5a",
+    weight: 2,
+    fillOpacity: 0.08,
+    pane: "selectionPane",
+  }).addTo(map);
+  updateBboxReadout();
+  if (options.fit) {
+    map.fitBounds(selectedArea.getBounds(), { padding: [24, 24] });
+  }
+  if (options.refreshWeather !== false) {
+    loadSelectedGridWeather(options.weatherLabel || "selected polygon");
+  }
+}
+
 function getSelectedBounds() {
   return selectedArea ? selectedArea.getBounds() : null;
+}
+
+function getSelectedGeometry() {
+  if (!selectedArea) return null;
+  if (selectedArea instanceof L.Rectangle) return boundsToPolygon(selectedArea.getBounds());
+  const latlngs = selectedArea.getLatLngs?.()[0] || [];
+  if (!Array.isArray(latlngs) || latlngs.length < 3) return boundsToPolygon(selectedArea.getBounds());
+  const coordinates = latlngs.map((point) => [point.lng, point.lat]);
+  const first = coordinates[0];
+  const last = coordinates.at(-1);
+  if (first && last && (first[0] !== last[0] || first[1] !== last[1])) {
+    coordinates.push([...first]);
+  }
+  return {
+    type: "Polygon",
+    coordinates: [coordinates],
+  };
+}
+
+function isValidPolygonGeometry(geometry) {
+  const ring = geometry?.type === "Polygon" ? geometry.coordinates?.[0] : null;
+  return Array.isArray(ring)
+    && ring.length >= 4
+    && ring.every((point) => (
+      Array.isArray(point)
+      && point.length >= 2
+      && Number.isFinite(Number(point[0]))
+      && Number.isFinite(Number(point[1]))
+    ));
 }
 
 view3dTerrainButton?.addEventListener("click", () => {
@@ -513,21 +587,70 @@ function parseBoundsText(value) {
 
 function resetDrawMode() {
   drawMode = false;
+  polygonDrawMode = false;
   firstCorner = null;
+  polygonPoints = [];
   drawButton.classList.remove("is-active");
+  drawPolygonButton?.classList.remove("is-active");
+  if (drawPolygonButton) drawPolygonButton.textContent = "Draw Polygon";
   if (previewArea) {
     map.removeLayer(previewArea);
     previewArea = null;
+  }
+  if (previewPolygon) {
+    map.removeLayer(previewPolygon);
+    previewPolygon = null;
   }
   map.getContainer().style.cursor = "";
 }
 
 function startDrawMode() {
   drawMode = true;
+  polygonDrawMode = false;
   firstCorner = null;
+  polygonPoints = [];
   drawButton.classList.add("is-active");
+  drawPolygonButton?.classList.remove("is-active");
+  if (drawPolygonButton) drawPolygonButton.textContent = "Draw Polygon";
   map.getContainer().style.cursor = "crosshair";
   setStatus("Draw box mode: click the first corner, then click the opposite corner.");
+}
+
+function startPolygonDrawMode() {
+  drawMode = false;
+  polygonDrawMode = true;
+  firstCorner = null;
+  polygonPoints = [];
+  drawButton.classList.remove("is-active");
+  drawPolygonButton?.classList.add("is-active");
+  if (drawPolygonButton) drawPolygonButton.textContent = "Finish Polygon";
+  if (previewArea) {
+    map.removeLayer(previewArea);
+    previewArea = null;
+  }
+  if (previewPolygon) {
+    map.removeLayer(previewPolygon);
+  }
+  previewPolygon = L.polygon([], {
+    color: "#b8542f",
+    dashArray: "6 4",
+    weight: 2,
+    fillOpacity: 0.08,
+    pane: "selectionPane",
+  }).addTo(map);
+  map.getContainer().style.cursor = "crosshair";
+  setStatus("Polygon mode: click boundary corners, then press Finish Polygon after at least three points.");
+}
+
+function finishPolygonDrawMode() {
+  if (!polygonDrawMode || polygonPoints.length < 3) {
+    setStatus("Add at least three polygon corners before finishing.");
+    return;
+  }
+  const latlngs = [...polygonPoints];
+  resetDrawMode();
+  setSelectedPolygon(latlngs, { weatherLabel: "drawn polygon" });
+  setStatus("Polygon boundary selected. Choose the building label, then process or open the 3D terrain.");
 }
 
 map.on("click", (event) => {
@@ -554,6 +677,17 @@ map.on("click", (event) => {
     return;
   }
 
+  if (polygonDrawMode) {
+    polygonPoints.push(event.latlng);
+    previewPolygon?.setLatLngs(polygonPoints);
+    setStatus(
+      polygonPoints.length < 3
+        ? `Polygon point ${polygonPoints.length} added. Add ${3 - polygonPoints.length} more.`
+        : `${polygonPoints.length} polygon points added. Press Finish Polygon when the boundary is complete.`,
+    );
+    return;
+  }
+
   const delta = 0.015;
   const bounds = [
     [event.latlng.lat - delta, event.latlng.lng - delta],
@@ -573,6 +707,14 @@ drawButton.addEventListener("click", () => {
     setStatus("Draw box cancelled.");
   } else {
     startDrawMode();
+  }
+});
+
+drawPolygonButton?.addEventListener("click", () => {
+  if (polygonDrawMode) {
+    finishPolygonDrawMode();
+  } else {
+    startPolygonDrawMode();
   }
 });
 
@@ -614,6 +756,100 @@ function polygonToBounds(geometry) {
     [Math.min(...lats), Math.min(...lngs)],
     [Math.max(...lats), Math.max(...lngs)],
   ];
+}
+
+function geometryRings(geometry) {
+  if (!geometry) return [];
+  if (geometry.type === "Polygon") return [geometry.coordinates?.[0] || []];
+  if (geometry.type === "MultiPolygon") return (geometry.coordinates || []).map((polygon) => polygon?.[0] || []);
+  return [];
+}
+
+function ringBounds(ring) {
+  const points = ring
+    .map((point) => [Number(point[0]), Number(point[1])])
+    .filter(([longitude, latitude]) => Number.isFinite(longitude) && Number.isFinite(latitude));
+  if (!points.length) return null;
+  return points.reduce(
+    (bounds, [longitude, latitude]) => ({
+      west: Math.min(bounds.west, longitude),
+      south: Math.min(bounds.south, latitude),
+      east: Math.max(bounds.east, longitude),
+      north: Math.max(bounds.north, latitude),
+    }),
+    { west: Infinity, south: Infinity, east: -Infinity, north: -Infinity },
+  );
+}
+
+function boundsIntersect(a, b) {
+  return a && b
+    && a.west <= b.east
+    && a.east >= b.west
+    && a.south <= b.north
+    && a.north >= b.south;
+}
+
+function pointInRing(point, ring) {
+  const [longitude, latitude] = point;
+  let inside = false;
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+    const [xi, yi] = ring[index];
+    const [xj, yj] = ring[previous];
+    const crosses = ((yi > latitude) !== (yj > latitude))
+      && longitude < ((xj - xi) * (latitude - yi)) / (yj - yi || Number.EPSILON) + xi;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+function orientation(a, b, c) {
+  return (b[1] - a[1]) * (c[0] - b[0]) - (b[0] - a[0]) * (c[1] - b[1]);
+}
+
+function onSegment(a, b, c) {
+  return Math.min(a[0], c[0]) <= b[0]
+    && b[0] <= Math.max(a[0], c[0])
+    && Math.min(a[1], c[1]) <= b[1]
+    && b[1] <= Math.max(a[1], c[1]);
+}
+
+function segmentsIntersect(a, b, c, d) {
+  const o1 = orientation(a, b, c);
+  const o2 = orientation(a, b, d);
+  const o3 = orientation(c, d, a);
+  const o4 = orientation(c, d, b);
+  if (Math.sign(o1) !== Math.sign(o2) && Math.sign(o3) !== Math.sign(o4)) return true;
+  return (o1 === 0 && onSegment(a, c, b))
+    || (o2 === 0 && onSegment(a, d, b))
+    || (o3 === 0 && onSegment(c, a, d))
+    || (o4 === 0 && onSegment(c, b, d));
+}
+
+function normalizeRing(ring) {
+  return ring
+    .map((point) => [Number(point[0]), Number(point[1])])
+    .filter(([longitude, latitude]) => Number.isFinite(longitude) && Number.isFinite(latitude));
+}
+
+function ringsIntersect(aRing, bRing) {
+  const a = normalizeRing(aRing);
+  const b = normalizeRing(bRing);
+  if (a.length < 3 || b.length < 3) return false;
+  if (!boundsIntersect(ringBounds(a), ringBounds(b))) return false;
+  if (a.some((point) => pointInRing(point, b)) || b.some((point) => pointInRing(point, a))) return true;
+  for (let aIndex = 0; aIndex < a.length - 1; aIndex += 1) {
+    for (let bIndex = 0; bIndex < b.length - 1; bIndex += 1) {
+      if (segmentsIntersect(a[aIndex], a[aIndex + 1], b[bIndex], b[bIndex + 1])) return true;
+    }
+  }
+  return false;
+}
+
+function featureIntersectsArea(feature, areaGeometry) {
+  if (!areaGeometry) return true;
+  const areaRings = geometryRings(areaGeometry);
+  const featureRings = geometryRings(feature.geometry);
+  return featureRings.some((featureRing) => areaRings.some((areaRing) => ringsIntersect(featureRing, areaRing)));
 }
 
 function ndviColor(value) {
@@ -1686,7 +1922,7 @@ function toGridCaptureParam(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T00:00:00` : value;
 }
 
-async function loadGridLayer(captureDate = null) {
+async function loadGridLayer(captureDate = null, options = {}) {
   const requestId = ++gridLayerRequestId;
   let path = "/api/grids";
   if (captureDate) {
@@ -1697,6 +1933,9 @@ async function loadGridLayer(captureDate = null) {
   }
   const grid = await fetchJson(path);
   if (requestId !== gridLayerRequestId) return;
+  if (options.areaGeometry) {
+    grid.features = (grid.features || []).filter((feature) => featureIntersectsArea(feature, options.areaGeometry));
+  }
   currentGridFeatures = grid.features || [];
   selectedGridTrendRows = [];
   selectedPopulationTrendRows = [];
@@ -1859,12 +2098,27 @@ document.getElementById("process-form").addEventListener("submit", async (event)
     return;
   }
 
-  resetDrawMode();
+  if (polygonDrawMode) {
+    if (polygonPoints.length < 3) {
+      setStatus("Add at least three polygon corners before processing.");
+      return;
+    }
+    const latlngs = [...polygonPoints];
+    resetDrawMode();
+    setSelectedPolygon(latlngs, { refreshWeather: false });
+  } else {
+    resetDrawMode();
+  }
   const isRange = startDate !== endDate;
+  const selectedGeometry = getSelectedGeometry() || boundsToPolygon(selectedBounds);
+  if (!isValidPolygonGeometry(selectedGeometry)) {
+    setStatus("Processing failed: selected boundary must be a polygon with at least three corners.");
+    return;
+  }
   setStatus(isRange ? "Querying Sentinel-2 scenes across the date range..." : "Querying Sentinel-2 scenes for the selected date...");
   try {
     const payload = {
-      area: boundsToPolygon(selectedBounds),
+      area: selectedGeometry,
       max_cloud_cover: maxCloud,
     };
     const result = await fetchJson("/api/ndvi/process-range", {
@@ -1891,7 +2145,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       })
       .catch(() => false);
     const displayCaptureDate = result.results.at(-1)?.capture_date;
-    await Promise.all([loadGridLayer(displayCaptureDate), loadDashboard(), loadMetadata()]);
+    await Promise.all([loadGridLayer(displayCaptureDate, { areaGeometry: payload.area }), loadDashboard(), loadMetadata()]);
     const contextFailed = !contextSucceeded;
     const suffix = contextFailed ? " DEM/land-cover context was not available for this area." : "";
     const completion = isRange
@@ -1910,6 +2164,8 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       landCoverUrl: context?.land_cover_url,
       demUrl: context?.dem_url,
       demTerrainUrl: context?.dem_terrain_url,
+      footprint: payload.area,
+      buildingType: selectedBuildingType(),
       label: isRange ? "Processed date range" : `Processed ${displayCaptureDate || startDate}`,
     });
     setStatus(`${completion}${rainfallStatus}${openMeteoStatus}${suffix}`);

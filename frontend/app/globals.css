@@ -314,7 +314,8 @@ select {
   font-size: 10px;
 }
 
-.flowbite-dashboard .flowbite-field input {
+.flowbite-dashboard .flowbite-field input,
+.flowbite-dashboard select.flowbite-field {
   min-height: 36px;
   color: #eaf8f9;
   background: rgba(2, 18, 30, 0.72);
@@ -323,11 +324,13 @@ select {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
-.flowbite-dashboard .flowbite-field input:hover {
+.flowbite-dashboard .flowbite-field input:hover,
+.flowbite-dashboard select.flowbite-field:hover {
   border-color: rgba(116, 210, 231, 0.34);
 }
 
-.flowbite-dashboard .flowbite-field input:focus {
+.flowbite-dashboard .flowbite-field input:focus,
+.flowbite-dashboard select.flowbite-field:focus {
   border-color: #35b98d;
   box-shadow: 0 0 0 3px rgba(53, 185, 141, 0.13);
 }

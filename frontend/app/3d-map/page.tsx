@@ -31,6 +31,14 @@ export default function ThreeDMapPage() {
               <option value="land-cover">Land cover</option>
             </select>
           </label>
+          <label htmlFor="three-d-building-type">
+            Building label
+            <select id="three-d-building-type" defaultValue="farm">
+              <option value="farm">Farm</option>
+              <option value="middle-man">Middle man</option>
+              <option value="end-product">End product destination</option>
+            </select>
+          </label>
           <div className="three-d-layer-list" aria-label="3D map layers">
             <label className="three-d-toggle-row" htmlFor="three-d-satellite-layer">
               <input id="three-d-satellite-layer" type="checkbox" defaultChecked />
@@ -52,10 +60,26 @@ export default function ThreeDMapPage() {
               <input id="three-d-marker-layer" type="checkbox" defaultChecked />
               Center marker
             </label>
+            <label className="three-d-toggle-row" htmlFor="three-d-building-layer">
+              <input id="three-d-building-layer" type="checkbox" defaultChecked />
+              Building model
+            </label>
+            <label className="three-d-toggle-row" htmlFor="three-d-cow-layer">
+              <input id="three-d-cow-layer" type="checkbox" defaultChecked />
+              Cows
+            </label>
           </div>
-          <button id="three-d-reset-camera" type="button">
-            Cinematic camera
-          </button>
+          <div className="three-d-map-actions" aria-label="Camera controls">
+            <button id="three-d-rotate-left" type="button" aria-label="Rotate view left">
+              &lt;
+            </button>
+            <button id="three-d-reset-camera" type="button">
+              Camera
+            </button>
+            <button id="three-d-rotate-right" type="button" aria-label="Rotate view right">
+              &gt;
+            </button>
+          </div>
           <p id="three-d-status">Loading 3D terrain around the target coordinate...</p>
         </aside>
 

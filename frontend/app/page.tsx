@@ -137,6 +137,7 @@ export default function MapPage() {
                 <Button className={secondaryButtonClass} color="alternative" size="sm" id="search-button" type="button">Search</Button>
                 <Button className={secondaryButtonClass} color="alternative" size="sm" id="draw-box-button" type="button">Draw Box</Button>
               </div>
+              <Button className={secondaryButtonClass} color="alternative" size="sm" id="draw-polygon-button" type="button">Draw Polygon</Button>
               <div className={`${labelClass} process-field-full`}>
                 <Label htmlFor="bounds-input">Paste bounds</Label>
                 <TextInput
@@ -151,6 +152,14 @@ export default function MapPage() {
               <div className="grid min-h-12 gap-1 rounded-md border border-cyan-200/25 bg-slate-950/80 p-2.5 text-xs text-cyan-100/70">
                 <span>Selected bounds</span>
                 <strong id="bbox-label" className="text-xs leading-snug text-cyan-50">No area selected</strong>
+              </div>
+              <div className={`${labelClass} process-field-full`}>
+                <Label htmlFor="building-type">Building label</Label>
+                <select id="building-type" className={inputClass} defaultValue="farm">
+                  <option value="farm">Farm</option>
+                  <option value="middle-man">Middle man</option>
+                  <option value="end-product">End product destination</option>
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className={labelClass}>
