@@ -55,21 +55,6 @@ type TerrainRequest = {
   demUrl: string | null;
   demTerrainUrl: string | null;
 };
-type DemTerrainPayload = {
-  bounds: {
-    west: number;
-    south: number;
-    east: number;
-    north: number;
-  };
-  width: number;
-  height: number;
-  minimum_height: number;
-  maximum_height: number;
-  heights: number[];
-  source?: string;
-};
-
 let cesiumScriptPromise: Promise<CesiumGlobal> | null = null;
 
 function loadCesiumScript() {
@@ -249,71 +234,6 @@ function proxiedImageUrl(url: string) {
   return url;
 }
 
-async function createLocalDemTerrainProvider(Cesium: CesiumGlobal, terrainUrl: string) {
-  const response = await fetch(proxiedImageUrl(terrainUrl));
-  if (!response.ok) throw new Error(`DEM terrain API returned ${response.status}`);
-  const payload = (await response.json()) as DemTerrainPayload;
-  const sourceWidth = payload.width;
-  const sourceHeight = payload.height;
-  const source = payload.heights;
-  const tileWidth = 65;
-  const tileHeight = 65;
-  const rectangle = Cesium.Rectangle.fromDegrees(
-    payload.bounds.west,
-    payload.bounds.south,
-    payload.bounds.east,
-    payload.bounds.north,
-  );
-  const tilingScheme = new Cesium.GeographicTilingScheme({
-    rectangle,
-    numberOfLevelZeroTilesX: 1,
-    numberOfLevelZeroTilesY: 1,
-  });
-
-  const sample = (longitudeDegrees: number, latitudeDegrees: number) => {
-    const u = clamp(
-      ((longitudeDegrees - payload.bounds.west) / (payload.bounds.east - payload.bounds.west)) * (sourceWidth - 1),
-      0,
-      sourceWidth - 1,
-    );
-    const v = clamp(
-      ((payload.bounds.north - latitudeDegrees) / (payload.bounds.north - payload.bounds.south)) * (sourceHeight - 1),
-      0,
-      sourceHeight - 1,
-    );
-    const x0 = Math.floor(u);
-    const y0 = Math.floor(v);
-    const x1 = Math.min(x0 + 1, sourceWidth - 1);
-    const y1 = Math.min(y0 + 1, sourceHeight - 1);
-    const dx = u - x0;
-    const dy = v - y0;
-    const top = source[y0 * sourceWidth + x0] * (1 - dx) + source[y0 * sourceWidth + x1] * dx;
-    const bottom = source[y1 * sourceWidth + x0] * (1 - dx) + source[y1 * sourceWidth + x1] * dx;
-    return top * (1 - dy) + bottom * dy;
-  };
-
-  return new Cesium.CustomHeightmapTerrainProvider({
-    width: tileWidth,
-    height: tileHeight,
-    tilingScheme,
-    credit: payload.source || "Local DEM",
-    callback: (x: number, y: number, level: number) => {
-      const tileRectangle = tilingScheme.tileXYToRectangle(x, y, level);
-      const heights = new Float32Array(tileWidth * tileHeight);
-      for (let row = 0; row < tileHeight; row += 1) {
-        const rowRatio = row / Math.max(tileHeight - 1, 1);
-        const latitude = Cesium.Math.toDegrees(Cesium.Math.lerp(tileRectangle.north, tileRectangle.south, rowRatio));
-        for (let column = 0; column < tileWidth; column += 1) {
-          const columnRatio = column / Math.max(tileWidth - 1, 1);
-          const longitude = Cesium.Math.toDegrees(Cesium.Math.lerp(tileRectangle.west, tileRectangle.east, columnRatio));
-          heights[row * tileWidth + column] = sample(longitude, latitude);
-        }
-      }
-      return heights;
-    },
-  });
-}
-
 function ringIntersectsBounds(ring: number[][], bounds: TerrainRequest) {
   return ring.some(([longitude, latitude]) => {
     return longitude >= bounds.west
@@ -361,7 +281,6 @@ export function ThreeDMapRuntime() {
     let viewer: import("cesium").Viewer | null = null;
     const terrainRequest = terrainRequestFromUrl();
     let landCoverImageryLayer: import("cesium").ImageryLayer | null = null;
-    let localDemTerrainProvider: import("cesium").TerrainProvider | null = null;
     const gridOverlayItems: { entity: import("cesium").Entity; feature: GridFeature }[] = [];
     const selectionEntities: import("cesium").Entity[] = [];
     const markerEntities: import("cesium").Entity[] = [];
@@ -389,22 +308,12 @@ export function ThreeDMapRuntime() {
         requestWaterMask: true,
       });
       const flatTerrainProvider = new Cesium.EllipsoidTerrainProvider();
-      if (terrainRequest.demTerrainUrl) {
-        try {
-          setStatus("Loading selected-area DEM terrain...");
-          localDemTerrainProvider = await createLocalDemTerrainProvider(Cesium, terrainRequest.demTerrainUrl);
-        } catch (error) {
-          console.warn("Local DEM terrain failed, falling back to Cesium World Terrain.", error);
-          localDemTerrainProvider = null;
-        }
-      }
       const currentGridStyle = (): GridStyle => {
         return gridStyleSelect?.value === "land-cover" ? "land-cover" : "ndvi";
       };
 
       viewer = new Cesium.Viewer(container, {
-        terrainProvider: localDemTerrainProvider || undefined,
-        terrain: localDemTerrainProvider ? undefined : worldTerrain,
+        terrain: worldTerrain,
         animation: false,
         baseLayerPicker: false,
         fullscreenButton: false,
@@ -504,11 +413,7 @@ export function ThreeDMapRuntime() {
           ? Cesium.Color.BLACK
           : Cesium.Color.fromCssColorString("#193329");
         if (elevationVisible) {
-          if (localDemTerrainProvider) {
-            viewer.scene.globe.terrainProvider = localDemTerrainProvider;
-          } else {
-            viewer.scene.setTerrain(worldTerrain);
-          }
+          viewer.scene.setTerrain(worldTerrain);
           viewer.scene.verticalExaggeration = Number(reliefInput?.value || 2.25);
           viewer.scene.globe.depthTestAgainstTerrain = true;
         } else {
@@ -597,18 +502,17 @@ export function ThreeDMapRuntime() {
           terrainRequest.north - terrainRequest.south,
           0.01,
         );
-        viewer.camera.flyTo({
-          destination: Cesium.Cartesian3.fromDegrees(
-            terrainRequest.centerLongitude - span * 0.58,
-            terrainRequest.centerLatitude - span * 0.34,
-            terrainRequest.cameraHeight,
+        const range = clamp(span * 130000, 700, 18000);
+        viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(target, Math.max(range * 0.14, 120)), {
+          offset: new Cesium.HeadingPitchRange(
+            Cesium.Math.toRadians(42),
+            Cesium.Math.toRadians(-48),
+            Math.min(range, terrainRequest.cameraHeight),
           ),
-          orientation: {
-            heading: Cesium.Math.toRadians(48),
-            pitch: Cesium.Math.toRadians(-22),
-            roll: 0,
-          },
           duration: 1.1,
+          complete: () => {
+            viewer?.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+          },
         });
       };
 
@@ -629,7 +533,7 @@ export function ThreeDMapRuntime() {
       resetButton?.addEventListener("click", setCinematicCamera);
       applyLayerVisibility();
       setCinematicCamera();
-      if (labelNode) labelNode.textContent = localDemTerrainProvider ? "Selected DEM terrain" : "Cesium terrain";
+      if (labelNode) labelNode.textContent = "Cesium terrain";
       loadGridOverlay().catch((error: Error) => {
         setStatus(`Cesium terrain loaded, but grid overlay failed: ${error.message}`);
       });
