@@ -364,7 +364,18 @@ const drawPolygonButton = document.getElementById("draw-polygon-button");
 const bboxLabel = document.getElementById("bbox-label");
 const view3dTerrainButton = document.getElementById("view-3d-terrain");
 const view3dGridButton = document.getElementById("view-3d-grid");
+const addSupplyChainStopButton = document.getElementById("add-supply-chain-stop");
+const clearSupplyChainButton = document.getElementById("clear-supply-chain");
+const viewFarmToForkButton = document.getElementById("view-farm-to-fork");
+const supplyChainList = document.getElementById("supply-chain-list");
+const supplyChainCount = document.getElementById("supply-chain-count");
+const supplyChainNameInput = document.getElementById("supply-chain-name");
+const saveSupplyChainButton = document.getElementById("save-supply-chain");
+const loadSupplyChainButton = document.getElementById("load-supply-chain");
+const savedSupplyChainSelect = document.getElementById("saved-supply-chain-routes");
 let latest3dContext = null;
+let supplyChainStops = [];
+const supplyChainStorageKey = "vekin-supply-chain-routes";
 
 function setStatus(message) {
   document.getElementById("status").textContent = message;
@@ -384,6 +395,82 @@ function updateBboxReadout() {
 
 function selectedBuildingType() {
   return document.getElementById("building-type")?.value || "farm";
+}
+
+function supplyChainTypeLabel(type) {
+  const labels = {
+    farm: "Farm",
+    "middle-man": "Middle man",
+    processor: "Processor",
+    warehouse: "Warehouse",
+    retailer: "Retailer",
+    "end-product": "End product destination",
+  };
+  return labels[type] || "Farm";
+}
+
+function routeDisplayName(route) {
+  return route?.name || "Farm-to-fork route";
+}
+
+function readSavedSupplyChainRoutes() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(supplyChainStorageKey) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSavedSupplyChainRoutes(routes) {
+  window.localStorage.setItem(supplyChainStorageKey, JSON.stringify(routes));
+}
+
+function currentRouteName() {
+  return supplyChainNameInput?.value.trim() || `Farm-to-fork route ${new Date().toLocaleDateString()}`;
+}
+
+function normalizeSupplyChainStop(stop, index = 0) {
+  if (!stop?.geometry || !isValidPolygonGeometry(stop.geometry)) return null;
+  const type = stop.type || "farm";
+  return {
+    id: stop.id || `stop-${Date.now()}-${index + 1}`,
+    type,
+    name: stop.name || supplyChainTypeLabel(type),
+    geometry: stop.geometry,
+  };
+}
+
+function normalizeSupplyChainRoute(route) {
+  const stops = (route?.stops || [])
+    .map((stop, index) => normalizeSupplyChainStop(stop, index))
+    .filter(Boolean);
+  if (!stops.length) return null;
+  return {
+    id: route.id || `route-${Date.now()}`,
+    name: routeDisplayName(route),
+    updatedAt: route.updatedAt || new Date().toISOString(),
+    stops,
+  };
+}
+
+function refreshSavedSupplyChainSelect() {
+  if (!savedSupplyChainSelect) return;
+  const routes = readSavedSupplyChainRoutes()
+    .map(normalizeSupplyChainRoute)
+    .filter(Boolean)
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  const selected = savedSupplyChainSelect.value;
+  savedSupplyChainSelect.innerHTML = '<option value="">Saved routes</option>';
+  routes.forEach((route) => {
+    const option = document.createElement("option");
+    option.value = route.id;
+    option.textContent = `${route.name} (${route.stops.length} stops)`;
+    savedSupplyChainSelect.appendChild(option);
+  });
+  if (routes.some((route) => route.id === selected)) {
+    savedSupplyChainSelect.value = selected;
+  }
 }
 
 function hide3dTerrainResult() {
@@ -413,6 +500,11 @@ function appendFootprintParams(params, geometry) {
   params.set("footprint", JSON.stringify(geometry));
 }
 
+function appendSupplyChainParams(params, stops) {
+  if (!Array.isArray(stops) || !stops.length) return;
+  params.set("route", JSON.stringify(stops));
+}
+
 function build3dTerrainUrl(bounds, options = {}) {
   const params = new URLSearchParams({
     label: options.label || "Processed selected area",
@@ -420,6 +512,7 @@ function build3dTerrainUrl(bounds, options = {}) {
   });
   appendBoundsParams(params, bounds);
   appendFootprintParams(params, options.footprint);
+  appendSupplyChainParams(params, options.route);
   if (options.overlayBounds) {
     appendBoundsParams(params, options.overlayBounds, "overlay_");
   }
@@ -432,12 +525,93 @@ function build3dTerrainUrl(bounds, options = {}) {
   return `/3d-map?${params.toString()}`;
 }
 
+function supplyChainBounds(stops) {
+  const boundsList = stops
+    .map((stop) => polygonToBounds(stop.geometry))
+    .filter(Boolean)
+    .map((bounds) => L.latLngBounds(bounds));
+  if (!boundsList.length) return null;
+  const merged = boundsList[0];
+  boundsList.slice(1).forEach((bounds) => merged.extend(bounds));
+  return merged;
+}
+
+function buildFarmToForkUrl() {
+  const bounds = supplyChainBounds(supplyChainStops);
+  if (!bounds) return null;
+  return build3dTerrainUrl(bounds, {
+    label: supplyChainNameInput?.value.trim() || "Farm to fork route",
+    route: supplyChainStops,
+    footprint: supplyChainStops[0]?.geometry,
+    buildingType: supplyChainStops[0]?.type || "farm",
+    startDate: getActiveDateRange().startDate,
+    endDate: getActiveDateRange().endDate,
+    landCoverUrl: latest3dContext?.land_cover_url,
+    demUrl: latest3dContext?.dem_url,
+    demTerrainUrl: latest3dContext?.dem_terrain_url,
+    overlayBounds: contextBoundsToLeafletBounds(latest3dContext?.bounds),
+  });
+}
+
+function updateFarmToForkButton() {
+  if (!viewFarmToForkButton) return;
+  const url = buildFarmToForkUrl();
+  if (url && supplyChainStops.length >= 2) {
+    viewFarmToForkButton.dataset.terrainUrl = url;
+    viewFarmToForkButton.classList.remove("hidden");
+  } else {
+    viewFarmToForkButton.removeAttribute("data-terrain-url");
+    viewFarmToForkButton.classList.add("hidden");
+  }
+}
+
+function renderSupplyChainStops() {
+  if (supplyChainCount) {
+    supplyChainCount.textContent = `${supplyChainStops.length} ${supplyChainStops.length === 1 ? "stop" : "stops"}`;
+  }
+  if (supplyChainList) {
+    supplyChainList.innerHTML = "";
+    supplyChainStops.forEach((stop, index) => {
+      const item = document.createElement("li");
+      item.className = "grid gap-1 rounded border border-cyan-200/15 bg-cyan-400/5 px-2 py-1";
+      item.innerHTML = `
+        <div class="flex items-center justify-between gap-2">
+          <span>${index + 1}. ${supplyChainTypeLabel(stop.type)}</span>
+          <small>${stop.name}</small>
+        </div>
+        <div class="grid grid-cols-3 gap-1">
+          <button type="button" data-route-action="up" data-route-index="${index}">Up</button>
+          <button type="button" data-route-action="down" data-route-index="${index}">Down</button>
+          <button type="button" data-route-action="remove" data-route-index="${index}">Remove</button>
+        </div>
+      `;
+      supplyChainList.appendChild(item);
+    });
+  }
+  updateFarmToForkButton();
+}
+
+function loadSupplyChainRoute(route) {
+  const normalized = normalizeSupplyChainRoute(route);
+  if (!normalized) {
+    setStatus("Saved route could not be loaded.");
+    return;
+  }
+  supplyChainStops = normalized.stops;
+  if (supplyChainNameInput) supplyChainNameInput.value = normalized.name;
+  renderSupplyChainStops();
+  const bounds = supplyChainBounds(supplyChainStops);
+  if (bounds) map.fitBounds(bounds, { padding: [24, 24] });
+  setStatus(`Loaded ${normalized.name}.`);
+}
+
 function show3dTerrainResult(bounds, options = {}) {
   if (!view3dTerrainButton) return;
   view3dTerrainButton.dataset.terrainUrl = build3dTerrainUrl(bounds, {
     ...options,
     footprint: options.footprint || getSelectedGeometry(),
     buildingType: options.buildingType || selectedBuildingType(),
+    route: options.route || supplyChainStops,
   });
   view3dTerrainButton.classList.remove("hidden");
 }
@@ -554,6 +728,100 @@ view3dGridButton?.addEventListener("click", () => {
   const url = view3dGridButton.dataset.terrainUrl;
   if (!url) {
     setStatus("Click a processed grid cell first, then open the selected grid in 3D.");
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+});
+
+addSupplyChainStopButton?.addEventListener("click", () => {
+  if (polygonDrawMode) {
+    if (polygonPoints.length < 3) {
+      setStatus("Add at least three polygon corners before adding a route stop.");
+      return;
+    }
+    const latlngs = [...polygonPoints];
+    resetDrawMode();
+    setSelectedPolygon(latlngs, { refreshWeather: false });
+  }
+  const geometry = getSelectedGeometry();
+  if (!isValidPolygonGeometry(geometry)) {
+    setStatus("Draw or select a polygon boundary before adding a route stop.");
+    return;
+  }
+  const type = selectedBuildingType();
+  supplyChainStops.push({
+    id: `stop-${Date.now()}-${supplyChainStops.length + 1}`,
+    type,
+    name: supplyChainTypeLabel(type),
+    geometry,
+  });
+  renderSupplyChainStops();
+  setStatus(`${supplyChainTypeLabel(type)} added to the farm-to-fork route.`);
+});
+
+clearSupplyChainButton?.addEventListener("click", () => {
+  supplyChainStops = [];
+  renderSupplyChainStops();
+  setStatus("Farm-to-fork route cleared.");
+});
+
+supplyChainList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-route-action]");
+  if (!button) return;
+  const index = Number(button.dataset.routeIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= supplyChainStops.length) return;
+  const action = button.dataset.routeAction;
+  if (action === "remove") {
+    supplyChainStops.splice(index, 1);
+  } else if (action === "up" && index > 0) {
+    [supplyChainStops[index - 1], supplyChainStops[index]] = [supplyChainStops[index], supplyChainStops[index - 1]];
+  } else if (action === "down" && index < supplyChainStops.length - 1) {
+    [supplyChainStops[index], supplyChainStops[index + 1]] = [supplyChainStops[index + 1], supplyChainStops[index]];
+  }
+  renderSupplyChainStops();
+});
+
+saveSupplyChainButton?.addEventListener("click", () => {
+  if (supplyChainStops.length < 2) {
+    setStatus("Add at least two route stops before saving.");
+    return;
+  }
+  const routes = readSavedSupplyChainRoutes()
+    .map(normalizeSupplyChainRoute)
+    .filter(Boolean);
+  const name = currentRouteName();
+  const existing = routes.find((route) => route.name.toLowerCase() === name.toLowerCase());
+  const route = {
+    id: existing?.id || `route-${Date.now()}`,
+    name,
+    updatedAt: new Date().toISOString(),
+    stops: supplyChainStops,
+  };
+  const nextRoutes = [route, ...routes.filter((candidate) => candidate.id !== route.id)].slice(0, 20);
+  writeSavedSupplyChainRoutes(nextRoutes);
+  if (supplyChainNameInput) supplyChainNameInput.value = name;
+  refreshSavedSupplyChainSelect();
+  if (savedSupplyChainSelect) savedSupplyChainSelect.value = route.id;
+  setStatus(`Saved ${name}.`);
+});
+
+loadSupplyChainButton?.addEventListener("click", () => {
+  const routeId = savedSupplyChainSelect?.value;
+  if (!routeId) {
+    setStatus("Choose a saved route to load.");
+    return;
+  }
+  const route = readSavedSupplyChainRoutes()
+    .map(normalizeSupplyChainRoute)
+    .filter(Boolean)
+    .find((candidate) => candidate.id === routeId);
+  loadSupplyChainRoute(route);
+});
+
+viewFarmToForkButton?.addEventListener("click", () => {
+  const url = viewFarmToForkButton.dataset.terrainUrl || buildFarmToForkUrl();
+  if (!url || supplyChainStops.length < 2) {
+    setStatus("Add at least two route stops before opening farm-to-fork 3D.");
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
@@ -2166,6 +2434,7 @@ document.getElementById("process-form").addEventListener("submit", async (event)
       demTerrainUrl: context?.dem_terrain_url,
       footprint: payload.area,
       buildingType: selectedBuildingType(),
+      route: supplyChainStops,
       label: isRange ? "Processed date range" : `Processed ${displayCaptureDate || startDate}`,
     });
     setStatus(`${completion}${rainfallStatus}${openMeteoStatus}${suffix}`);
@@ -2255,6 +2524,8 @@ document.getElementById("search-button").addEventListener("click", async () => {
 const initialDateRange = readStoredDateRange() || getDefaultDateRange();
 setActiveDateRange(initialDateRange);
 updateBboxReadout();
+refreshSavedSupplyChainSelect();
+renderSupplyChainStops();
 document.getElementById("apply-map-date-range").addEventListener("click", () => {
   const range = {
     startDate: document.getElementById("map-range-start").value,

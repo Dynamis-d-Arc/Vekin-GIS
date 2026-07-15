@@ -36,6 +36,9 @@ export default function ThreeDMapPage() {
             <select id="three-d-building-type" defaultValue="farm">
               <option value="farm">Farm</option>
               <option value="middle-man">Middle man</option>
+              <option value="processor">Processor</option>
+              <option value="warehouse">Warehouse</option>
+              <option value="retailer">Retailer</option>
               <option value="end-product">End product destination</option>
             </select>
           </label>
@@ -62,7 +65,15 @@ export default function ThreeDMapPage() {
             </label>
             <label className="three-d-toggle-row" htmlFor="three-d-building-layer">
               <input id="three-d-building-layer" type="checkbox" defaultChecked />
-              Building model
+              Route buildings
+            </label>
+            <label className="three-d-toggle-row" htmlFor="three-d-route-layer">
+              <input id="three-d-route-layer" type="checkbox" defaultChecked />
+              Farm-to-fork route
+            </label>
+            <label className="three-d-toggle-row" htmlFor="three-d-shipment-layer">
+              <input id="three-d-shipment-layer" type="checkbox" defaultChecked />
+              Animated shipment
             </label>
             <label className="three-d-toggle-row" htmlFor="three-d-cow-layer">
               <input id="three-d-cow-layer" type="checkbox" defaultChecked />

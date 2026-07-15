@@ -158,8 +158,45 @@ export default function MapPage() {
                 <select id="building-type" className={inputClass} defaultValue="farm">
                   <option value="farm">Farm</option>
                   <option value="middle-man">Middle man</option>
+                  <option value="processor">Processor</option>
+                  <option value="warehouse">Warehouse</option>
+                  <option value="retailer">Retailer</option>
                   <option value="end-product">End product destination</option>
                 </select>
+              </div>
+              <div className="grid gap-2 rounded-md border border-cyan-200/25 bg-slate-950/80 p-2.5 text-xs text-cyan-100/70">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Farm-to-fork route</span>
+                  <strong id="supply-chain-count" className="text-lime-200">0 stops</strong>
+                </div>
+                <TextInput
+                  className={inputClass}
+                  sizing="sm"
+                  id="supply-chain-name"
+                  type="text"
+                  placeholder="Route name"
+                />
+                <ol id="supply-chain-list" className="grid gap-1 text-cyan-50" />
+                <div className="grid grid-cols-2 gap-2">
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="add-supply-chain-stop" type="button">Add Stop</Button>
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="clear-supply-chain" type="button">Clear Route</Button>
+                </div>
+                <div className="grid grid-cols-[1fr_auto] gap-2">
+                  <select id="saved-supply-chain-routes" className={inputClass} defaultValue="">
+                    <option value="">Saved routes</option>
+                  </select>
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="save-supply-chain" type="button">Save</Button>
+                </div>
+                <Button className={secondaryButtonClass} color="alternative" size="sm" id="load-supply-chain" type="button">Load Saved Route</Button>
+                <Button
+                  className={`${secondaryButtonClass} hidden`}
+                  color="alternative"
+                  id="view-farm-to-fork"
+                  size="sm"
+                  type="button"
+                >
+                  View farm-to-fork 3D
+                </Button>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div className={labelClass}>

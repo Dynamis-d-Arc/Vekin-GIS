@@ -26,7 +26,7 @@ type GridCollection = {
   features?: GridFeature[];
 };
 type GridStyle = "ndvi" | "land-cover";
-type BuildingType = "farm" | "middle-man" | "end-product";
+type BuildingType = "farm" | "middle-man" | "processor" | "warehouse" | "retailer" | "end-product";
 type Boundary = {
   west: number;
   south: number;
@@ -41,6 +41,12 @@ type CowPoint = {
 type FootprintGeometry = {
   type: "Polygon" | "MultiPolygon";
   coordinates: number[][][] | number[][][][];
+};
+type SupplyChainStop = {
+  id?: string;
+  type: BuildingType;
+  name?: string;
+  geometry: FootprintGeometry;
 };
 
 declare global {
@@ -93,6 +99,7 @@ type TerrainRequest = {
   demTerrainUrl: string | null;
   footprint: FootprintGeometry | null;
   buildingType: BuildingType;
+  route: SupplyChainStop[];
 };
 let cesiumScriptPromise: Promise<CesiumGlobal> | null = null;
 
@@ -137,7 +144,13 @@ function finiteParam(params: URLSearchParams, key: string) {
 }
 
 function buildingTypeFromValue(value: string | null): BuildingType {
-  if (value === "middle-man" || value === "end-product") return value;
+  if (
+    value === "middle-man"
+    || value === "processor"
+    || value === "warehouse"
+    || value === "retailer"
+    || value === "end-product"
+  ) return value;
   return "farm";
 }
 
@@ -150,6 +163,28 @@ function parseFootprint(value: string | null): FootprintGeometry | null {
     return parsed;
   } catch {
     return null;
+  }
+}
+
+function parseSupplyChainRoute(value: string | null): SupplyChainStop[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((stop, index) => {
+      if (!stop || typeof stop !== "object") return [];
+      const candidate = stop as { id?: string; type?: string; name?: string; geometry?: FootprintGeometry };
+      const geometry = candidate.geometry;
+      if (!geometry || (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon")) return [];
+      return [{
+        id: candidate.id || `route-stop-${index + 1}`,
+        type: buildingTypeFromValue(candidate.type || null),
+        name: candidate.name,
+        geometry,
+      }];
+    });
+  } catch {
+    return [];
   }
 }
 
@@ -171,6 +206,7 @@ function terrainRequestFromUrl(): TerrainRequest {
     && overlaySouth! < overlayNorth!;
   const footprint = parseFootprint(params.get("footprint"));
   const buildingType = buildingTypeFromValue(params.get("building_type"));
+  const route = parseSupplyChainRoute(params.get("route"));
 
   if (hasBounds) {
     const width = east! - west!;
@@ -195,6 +231,7 @@ function terrainRequestFromUrl(): TerrainRequest {
       demTerrainUrl: params.get("dem_terrain_url"),
       footprint,
       buildingType,
+      route,
     };
   }
 
@@ -217,6 +254,7 @@ function terrainRequestFromUrl(): TerrainRequest {
     demTerrainUrl: params.get("dem_terrain_url"),
     footprint,
     buildingType,
+    route,
   };
 }
 
@@ -296,26 +334,68 @@ function proxiedImageUrl(url: string) {
   return url;
 }
 
+function buildingTypeLabel(buildingType: BuildingType) {
+  if (buildingType === "middle-man") return "Middle man";
+  if (buildingType === "processor") return "Processor";
+  if (buildingType === "warehouse") return "Warehouse";
+  if (buildingType === "retailer") return "Retailer";
+  if (buildingType === "end-product") return "End product destination";
+  return "Farm";
+}
+
 function buildingStyle(Cesium: CesiumGlobal, buildingType: BuildingType) {
   if (buildingType === "middle-man") {
     return {
-      label: "Middle man",
+      label: buildingTypeLabel(buildingType),
       color: Cesium.Color.fromCssColorString("#f59e0b"),
       height: 54,
     };
   }
+  if (buildingType === "processor") {
+    return {
+      label: buildingTypeLabel(buildingType),
+      color: Cesium.Color.fromCssColorString("#a855f7"),
+      height: 66,
+    };
+  }
+  if (buildingType === "warehouse") {
+    return {
+      label: buildingTypeLabel(buildingType),
+      color: Cesium.Color.fromCssColorString("#06b6d4"),
+      height: 48,
+    };
+  }
+  if (buildingType === "retailer") {
+    return {
+      label: buildingTypeLabel(buildingType),
+      color: Cesium.Color.fromCssColorString("#ef4444"),
+      height: 58,
+    };
+  }
   if (buildingType === "end-product") {
     return {
-      label: "End product destination",
+      label: buildingTypeLabel(buildingType),
       color: Cesium.Color.fromCssColorString("#2563eb"),
       height: 72,
     };
   }
   return {
-    label: "Farm",
+    label: buildingTypeLabel(buildingType),
     color: Cesium.Color.fromCssColorString("#22c55e"),
     height: 34,
   };
+}
+
+function routeStopsForRequest(request: TerrainRequest): SupplyChainStop[] {
+  if (request.route.length) return request.route;
+  const geometry = request.footprint || fallbackFootprint(request);
+  if (!geometry) return [];
+  return [{
+    id: "selected-building",
+    type: request.buildingType,
+    name: buildingTypeLabel(request.buildingType),
+    geometry,
+  }];
 }
 
 function fallbackFootprint(request: TerrainRequest): FootprintGeometry | null {
@@ -421,7 +501,7 @@ function ringIntersectsBounds(ring: number[][], bounds: TerrainRequest) {
 function featureIntersectsBounds(feature: GridFeature, bounds: TerrainRequest) {
   if (!bounds.hasBounds) return true;
   const footprintBoundary = footprintBounds(bounds.footprint);
-  if (footprintBoundary) {
+  if (footprintBoundary && !bounds.route.length) {
     return polygonRings(feature).some((ring) => ringIntersectsBounds(ring, { ...bounds, ...footprintBoundary }));
   }
   if (feature.geometry.type === "Polygon") {
@@ -453,6 +533,8 @@ export function ThreeDMapRuntime() {
     const selectionLayerInput = document.getElementById("three-d-selection-layer") as HTMLInputElement | null;
     const markerLayerInput = document.getElementById("three-d-marker-layer") as HTMLInputElement | null;
     const buildingLayerInput = document.getElementById("three-d-building-layer") as HTMLInputElement | null;
+    const routeLayerInput = document.getElementById("three-d-route-layer") as HTMLInputElement | null;
+    const shipmentLayerInput = document.getElementById("three-d-shipment-layer") as HTMLInputElement | null;
     const cowLayerInput = document.getElementById("three-d-cow-layer") as HTMLInputElement | null;
     const resetButton = document.getElementById("three-d-reset-camera");
     const rotateLeftButton = document.getElementById("three-d-rotate-left");
@@ -470,6 +552,8 @@ export function ThreeDMapRuntime() {
     const markerEntities: import("cesium").Entity[] = [];
     const buildingEntities: import("cesium").Entity[] = [];
     const buildingLabelEntities: import("cesium").Entity[] = [];
+    const routeEntities: import("cesium").Entity[] = [];
+    const shipmentEntities: import("cesium").Entity[] = [];
     const cowEntities: import("cesium").Entity[] = [];
     if (titleNode) titleNode.textContent = terrainRequest.label;
     if (buildingTypeSelect) buildingTypeSelect.value = terrainRequest.buildingType;
@@ -572,7 +656,9 @@ export function ThreeDMapRuntime() {
       });
       markerEntities.push(markerEntity);
       if (terrainRequest.hasBounds) {
-        const selectionRings = footprintRings(terrainRequest.footprint);
+        const selectionRings = terrainRequest.route.length
+          ? terrainRequest.route.flatMap((stop) => footprintRings(stop.geometry))
+          : footprintRings(terrainRequest.footprint);
         if (selectionRings.length) {
           selectionRings.forEach((ring) => {
             const selectionEntity = viewer?.entities.add({
@@ -605,46 +691,119 @@ export function ThreeDMapRuntime() {
           selectionEntities.push(selectionEntity);
         }
       }
-      const buildingFootprint = terrainRequest.footprint || fallbackFootprint(terrainRequest);
-      footprintRings(buildingFootprint).forEach((ring, index) => {
-        const style = buildingStyle(Cesium, currentBuildingType());
-        const coordinates = ring.flatMap(([longitude, latitude]) => [longitude, latitude]);
-        const buildingEntity = viewer?.entities.add({
-          name: `${style.label} building`,
-          polygon: {
-            hierarchy: Cesium.Cartesian3.fromDegreesArray(coordinates),
-            material: style.color.withAlpha(0.72),
-            outline: true,
-            outlineColor: Cesium.Color.WHITE.withAlpha(0.8),
-            height: 0,
-            extrudedHeight: style.height,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            extrudedHeightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
-          },
-          properties: {
-            type: "building",
-            buildingType: currentBuildingType(),
+      const routeCenters: { longitude: number; latitude: number; height: number; label: string }[] = [];
+      routeStopsForRequest(terrainRequest).forEach((stop, stopIndex) => {
+        footprintRings(stop.geometry).forEach((ring, ringIndex) => {
+          const style = buildingStyle(Cesium, stop.type);
+          const label = stop.name || style.label;
+          const coordinates = ring.flatMap(([longitude, latitude]) => [longitude, latitude]);
+          const buildingEntity = viewer?.entities.add({
+            name: `${label} building`,
+            polygon: {
+              hierarchy: Cesium.Cartesian3.fromDegreesArray(coordinates),
+              material: style.color.withAlpha(0.72),
+              outline: true,
+              outlineColor: Cesium.Color.WHITE.withAlpha(0.8),
+              height: 0,
+              extrudedHeight: style.height,
+              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+              extrudedHeightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
+            },
+            properties: {
+              type: "building",
+              buildingType: stop.type,
+              routeIndex: stopIndex + 1,
+            },
+          });
+          if (buildingEntity) buildingEntities.push(buildingEntity);
+
+          const centroid = ringCentroid(ring);
+          if (ringIndex === 0) {
+            routeCenters.push({
+              longitude: centroid.longitude,
+              latitude: centroid.latitude,
+              height: style.height,
+              label,
+            });
+          }
+          const labelEntity = viewer?.entities.add({
+            name: `${label} label`,
+            position: Cesium.Cartesian3.fromDegrees(centroid.longitude, centroid.latitude, style.height + 16),
+            label: {
+              text: `${stopIndex + 1}. ${label}`,
+              font: "800 14px sans-serif",
+              fillColor: Cesium.Color.WHITE,
+              outlineColor: Cesium.Color.BLACK,
+              outlineWidth: 3,
+              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              pixelOffset: new Cesium.Cartesian2(0, -10 - ringIndex * 4),
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+          });
+          if (labelEntity) buildingLabelEntities.push(labelEntity);
+        });
+      });
+      routeCenters.slice(0, -1).forEach((center, index) => {
+        const next = routeCenters[index + 1];
+        const routeEntity = viewer?.entities.add({
+          name: `${center.label} to ${next.label}`,
+          polyline: {
+            positions: Cesium.Cartesian3.fromDegreesArrayHeights([
+              center.longitude,
+              center.latitude,
+              center.height + 38,
+              next.longitude,
+              next.latitude,
+              next.height + 38,
+            ]),
+            width: 6,
+            material: new Cesium.PolylineGlowMaterialProperty({
+              glowPower: 0.18,
+              taperPower: 0.65,
+              color: Cesium.Color.fromCssColorString("#d9f99d").withAlpha(0.92),
+            }),
+            clampToGround: false,
           },
         });
-        if (buildingEntity) buildingEntities.push(buildingEntity);
-
-        const centroid = ringCentroid(ring);
-        const labelEntity = viewer?.entities.add({
-          name: `${style.label} label`,
-          position: Cesium.Cartesian3.fromDegrees(centroid.longitude, centroid.latitude, style.height + 16),
+        if (routeEntity) routeEntities.push(routeEntity);
+      });
+      if (routeCenters.length > 1) {
+        const startTime = Cesium.JulianDate.now();
+        const shipmentPosition = new Cesium.CallbackPositionProperty((time, result) => {
+          const segmentSeconds = 5;
+          const elapsed = Math.max(0, Cesium.JulianDate.secondsDifference(time || Cesium.JulianDate.now(), startTime));
+          const segmentIndex = Math.floor(elapsed / segmentSeconds) % (routeCenters.length - 1);
+          const segmentProgress = (elapsed % segmentSeconds) / segmentSeconds;
+          const from = routeCenters[segmentIndex];
+          const to = routeCenters[segmentIndex + 1];
+          const longitude = from.longitude + (to.longitude - from.longitude) * segmentProgress;
+          const latitude = from.latitude + (to.latitude - from.latitude) * segmentProgress;
+          const height = Math.max(from.height, to.height) + 55;
+          return Cesium.Cartesian3.fromDegrees(longitude, latitude, height, undefined, result);
+        }, false);
+        const shipmentEntity = viewer?.entities.add({
+          name: "Animated shipment",
+          position: shipmentPosition,
+          point: {
+            pixelSize: 14,
+            color: Cesium.Color.fromCssColorString("#d9f99d"),
+            outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 3,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
           label: {
-            text: style.label,
-            font: "800 14px sans-serif",
+            text: "shipment",
+            font: "800 12px sans-serif",
             fillColor: Cesium.Color.WHITE,
             outlineColor: Cesium.Color.BLACK,
             outlineWidth: 3,
             style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            pixelOffset: new Cesium.Cartesian2(0, -10 - index * 4),
+            pixelOffset: new Cesium.Cartesian2(0, -24),
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
           },
         });
-        if (labelEntity) buildingLabelEntities.push(labelEntity);
-      });
+        if (shipmentEntity) shipmentEntities.push(shipmentEntity);
+      }
       cowPointsForBoundary(terrainRequest).forEach((cow) => {
         const cowEntity = viewer?.entities.add({
           name: cow.id,
@@ -686,6 +845,8 @@ export function ThreeDMapRuntime() {
         const selectionVisible = selectionLayerInput?.checked !== false;
         const markerVisible = markerLayerInput?.checked !== false;
         const buildingVisible = buildingLayerInput?.checked !== false;
+        const routeVisible = routeLayerInput?.checked !== false;
+        const shipmentVisible = shipmentLayerInput?.checked !== false;
         const cowVisible = cowLayerInput?.checked !== false;
 
         if (satelliteLayer) satelliteLayer.show = satelliteVisible;
@@ -719,6 +880,12 @@ export function ThreeDMapRuntime() {
         buildingLabelEntities.forEach((entity) => {
           entity.show = buildingVisible;
         });
+        routeEntities.forEach((entity) => {
+          entity.show = routeVisible;
+        });
+        shipmentEntities.forEach((entity) => {
+          entity.show = shipmentVisible && routeVisible;
+        });
         cowEntities.forEach((entity) => {
           entity.show = cowVisible;
         });
@@ -743,6 +910,7 @@ export function ThreeDMapRuntime() {
       };
 
       const updateBuildingStyle = () => {
+        if (terrainRequest.route.length) return;
         const style = buildingStyle(Cesium, currentBuildingType());
         buildingEntities.forEach((entity) => {
           entity.name = `${style.label} building`;
@@ -871,6 +1039,8 @@ export function ThreeDMapRuntime() {
       selectionLayerInput?.addEventListener("change", applyLayerVisibility);
       markerLayerInput?.addEventListener("change", applyLayerVisibility);
       buildingLayerInput?.addEventListener("change", applyLayerVisibility);
+      routeLayerInput?.addEventListener("change", applyLayerVisibility);
+      shipmentLayerInput?.addEventListener("change", applyLayerVisibility);
       cowLayerInput?.addEventListener("change", applyLayerVisibility);
       resetButton?.addEventListener("click", setCinematicCamera);
       rotateLeftButton?.addEventListener("click", rotateLeft);
@@ -892,6 +1062,8 @@ export function ThreeDMapRuntime() {
         selectionLayerInput?.removeEventListener("change", applyLayerVisibility);
         markerLayerInput?.removeEventListener("change", applyLayerVisibility);
         buildingLayerInput?.removeEventListener("change", applyLayerVisibility);
+        routeLayerInput?.removeEventListener("change", applyLayerVisibility);
+        shipmentLayerInput?.removeEventListener("change", applyLayerVisibility);
         cowLayerInput?.removeEventListener("change", applyLayerVisibility);
         resetButton?.removeEventListener("click", setCinematicCamera);
         rotateLeftButton?.removeEventListener("click", rotateLeft);
