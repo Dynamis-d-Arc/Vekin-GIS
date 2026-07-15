@@ -179,11 +179,14 @@ function renderTrend(rows) {
 
 function setupMapPanelControls(mapInstance) {
   const mapCard = document.getElementById("map-card");
+  const controlStack = document.getElementById("map-control-stack");
   const processForm = document.getElementById("process-form");
-  const formToggle = document.getElementById("toggle-process-form");
+  const routeForm = document.getElementById("three-d-route-form");
+  const show2dFormButton = document.getElementById("show-2d-gis-form");
+  const show3dFormButton = document.getElementById("show-3d-ftf-form");
   const formClose = document.getElementById("close-process-form");
   const fullscreenToggle = document.getElementById("toggle-map-fullscreen");
-  if (!mapCard || !processForm || !formToggle || !fullscreenToggle) return;
+  if (!mapCard || !controlStack || !processForm || !routeForm || !show2dFormButton || !show3dFormButton || !fullscreenToggle) return;
 
   const setButtonContent = (button, icon, label) => {
     button.innerHTML = `
@@ -198,24 +201,41 @@ function setupMapPanelControls(mapInstance) {
     }
   };
 
-  const setFormCollapsed = (isCollapsed, returnFocus = false) => {
-    processForm.classList.toggle("process-form-collapsed", isCollapsed);
-    processForm.setAttribute("aria-hidden", String(isCollapsed));
-    if (isCollapsed) {
-      processForm.setAttribute("inert", "");
+  const setActiveForm = (mode, returnFocus = false) => {
+    const isHidden = mode === "hidden";
+    const is2d = mode === "2d";
+    const is3d = mode === "3d";
+    controlStack.classList.toggle("process-form-collapsed", isHidden);
+    controlStack.setAttribute("aria-hidden", String(isHidden));
+    processForm.classList.toggle("hidden", !is2d);
+    routeForm.classList.toggle("hidden", !is3d);
+    processForm.setAttribute("aria-hidden", String(!is2d));
+    routeForm.setAttribute("aria-hidden", String(!is3d));
+    show2dFormButton.classList.toggle("is-active", is2d);
+    show3dFormButton.classList.toggle("is-active", is3d);
+    show2dFormButton.setAttribute("aria-pressed", String(is2d));
+    show3dFormButton.setAttribute("aria-pressed", String(is3d));
+    if (isHidden) {
+      controlStack.setAttribute("inert", "");
     } else {
-      processForm.removeAttribute("inert");
+      controlStack.removeAttribute("inert");
     }
-    setButtonContent(formToggle, isCollapsed ? "+" : "-", isCollapsed ? "Show form" : "Hide form");
-    formToggle.setAttribute("aria-expanded", String(!isCollapsed));
-    if (returnFocus) formToggle.focus();
+    if (returnFocus) {
+      (is3d ? show3dFormButton : show2dFormButton).focus();
+    }
   };
 
-  formToggle.addEventListener("click", () => {
-    setFormCollapsed(!processForm.classList.contains("process-form-collapsed"));
+  show2dFormButton.addEventListener("click", () => {
+    const isOpen = !processForm.classList.contains("hidden") && !controlStack.classList.contains("process-form-collapsed");
+    setActiveForm(isOpen ? "hidden" : "2d", true);
   });
 
-  formClose?.addEventListener("click", () => setFormCollapsed(true, true));
+  show3dFormButton.addEventListener("click", () => {
+    const isOpen = !routeForm.classList.contains("hidden") && !controlStack.classList.contains("process-form-collapsed");
+    setActiveForm(isOpen ? "hidden" : "3d", true);
+  });
+
+  formClose?.addEventListener("click", () => setActiveForm("hidden", true));
 
   fullscreenToggle.addEventListener("click", () => {
     const isExpanded = mapCard.classList.toggle("map-card-expanded");
@@ -225,8 +245,8 @@ function setupMapPanelControls(mapInstance) {
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !processForm.classList.contains("process-form-collapsed")) {
-      setFormCollapsed(true, true);
+    if (event.key === "Escape" && !controlStack.classList.contains("process-form-collapsed")) {
+      setActiveForm("hidden", true);
       return;
     }
     if (event.key !== "Escape" || !mapCard.classList.contains("map-card-expanded")) return;
@@ -235,6 +255,8 @@ function setupMapPanelControls(mapInstance) {
     fullscreenToggle.setAttribute("aria-expanded", "false");
     refreshMapSize();
   });
+
+  setActiveForm("2d");
 }
 
 function setupSelectedGridDetailTabs() {
@@ -361,6 +383,7 @@ let selectedPopulationTrendRows = [];
 let selectedLandCoverTrendRows = [];
 const drawButton = document.getElementById("draw-box-button");
 const drawPolygonButton = document.getElementById("draw-polygon-button");
+const draw3dPolygonButton = document.getElementById("draw-3d-polygon-button");
 const bboxLabel = document.getElementById("bbox-label");
 const view3dTerrainButton = document.getElementById("view-3d-terrain");
 const view3dGridButton = document.getElementById("view-3d-grid");
@@ -373,9 +396,17 @@ const supplyChainNameInput = document.getElementById("supply-chain-name");
 const saveSupplyChainButton = document.getElementById("save-supply-chain");
 const loadSupplyChainButton = document.getElementById("load-supply-chain");
 const savedSupplyChainSelect = document.getElementById("saved-supply-chain-routes");
+const buildingTypeSelect = document.getElementById("building-type");
+const farmDataPanel = document.getElementById("farm-data-panel");
+const farmNameInput = document.getElementById("farm-name");
+const farmCowCountInput = document.getElementById("farm-cow-count");
+const farmHerdTypeInput = document.getElementById("farm-herd-type");
+const farmDailyOutputInput = document.getElementById("farm-daily-output");
+const farmCo2eInput = document.getElementById("farm-co2e");
 let latest3dContext = null;
 let supplyChainStops = [];
 const supplyChainStorageKey = "vekin-supply-chain-routes";
+const supplyChainBoundsPaddingRatio = 0.45;
 
 function setStatus(message) {
   document.getElementById("status").textContent = message;
@@ -394,7 +425,49 @@ function updateBboxReadout() {
 }
 
 function selectedBuildingType() {
-  return document.getElementById("building-type")?.value || "farm";
+  return buildingTypeSelect?.value || "farm";
+}
+
+function numericInputValue(input) {
+  const value = Number(input?.value);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function normalizeFarmMetrics(metrics = {}) {
+  const cowCount = Number(metrics.cowCount);
+  const dailyOutputKg = Number(metrics.dailyOutputKg);
+  const co2eKgPerDay = Number(metrics.co2eKgPerDay);
+  const herdType = ["dairy", "beef", "mixed"].includes(metrics.herdType) ? metrics.herdType : "mixed";
+  const normalized = {
+    herdType,
+  };
+  if (Number.isFinite(cowCount) && cowCount >= 0) normalized.cowCount = cowCount;
+  if (Number.isFinite(dailyOutputKg) && dailyOutputKg >= 0) normalized.dailyOutputKg = dailyOutputKg;
+  if (Number.isFinite(co2eKgPerDay) && co2eKgPerDay >= 0) normalized.co2eKgPerDay = co2eKgPerDay;
+  return normalized;
+}
+
+function currentFarmMetrics() {
+  return normalizeFarmMetrics({
+    cowCount: numericInputValue(farmCowCountInput),
+    herdType: farmHerdTypeInput?.value || "mixed",
+    dailyOutputKg: numericInputValue(farmDailyOutputInput),
+    co2eKgPerDay: numericInputValue(farmCo2eInput),
+  });
+}
+
+function farmMetricsSummary(metrics) {
+  if (!metrics) return "";
+  const parts = [];
+  if (Number.isFinite(Number(metrics.cowCount))) parts.push(`${Number(metrics.cowCount).toLocaleString()} cows`);
+  if (metrics.herdType) parts.push(`${metrics.herdType} herd`);
+  if (Number.isFinite(Number(metrics.co2eKgPerDay))) parts.push(`${Number(metrics.co2eKgPerDay).toLocaleString()} kg CO2e/day`);
+  return parts.join(" · ");
+}
+
+function updateFarmDataPanel() {
+  if (!farmDataPanel) return;
+  farmDataPanel.classList.toggle("hidden", selectedBuildingType() !== "farm");
 }
 
 function supplyChainTypeLabel(type) {
@@ -433,12 +506,16 @@ function currentRouteName() {
 function normalizeSupplyChainStop(stop, index = 0) {
   if (!stop?.geometry || !isValidPolygonGeometry(stop.geometry)) return null;
   const type = stop.type || "farm";
-  return {
+  const normalized = {
     id: stop.id || `stop-${Date.now()}-${index + 1}`,
     type,
     name: stop.name || supplyChainTypeLabel(type),
     geometry: stop.geometry,
   };
+  if (type === "farm") {
+    normalized.farmMetrics = normalizeFarmMetrics(stop.farmMetrics);
+  }
+  return normalized;
 }
 
 function normalizeSupplyChainRoute(route) {
@@ -533,7 +610,7 @@ function supplyChainBounds(stops) {
   if (!boundsList.length) return null;
   const merged = boundsList[0];
   boundsList.slice(1).forEach((bounds) => merged.extend(bounds));
-  return merged;
+  return merged.pad(supplyChainBoundsPaddingRatio);
 }
 
 function buildFarmToForkUrl() {
@@ -579,6 +656,7 @@ function renderSupplyChainStops() {
           <span>${index + 1}. ${supplyChainTypeLabel(stop.type)}</span>
           <small>${stop.name}</small>
         </div>
+        ${stop.type === "farm" && farmMetricsSummary(stop.farmMetrics) ? `<small>${farmMetricsSummary(stop.farmMetrics)}</small>` : ""}
         <div class="grid grid-cols-3 gap-1">
           <button type="button" data-route-action="up" data-route-index="${index}">Up</button>
           <button type="button" data-route-action="down" data-route-index="${index}">Down</button>
@@ -733,6 +811,8 @@ view3dGridButton?.addEventListener("click", () => {
   window.open(url, "_blank", "noopener,noreferrer");
 });
 
+buildingTypeSelect?.addEventListener("change", updateFarmDataPanel);
+
 addSupplyChainStopButton?.addEventListener("click", () => {
   if (polygonDrawMode) {
     if (polygonPoints.length < 3) {
@@ -749,11 +829,14 @@ addSupplyChainStopButton?.addEventListener("click", () => {
     return;
   }
   const type = selectedBuildingType();
+  const farmName = farmNameInput?.value.trim();
+  const farmMetrics = type === "farm" ? currentFarmMetrics() : null;
   supplyChainStops.push({
     id: `stop-${Date.now()}-${supplyChainStops.length + 1}`,
     type,
-    name: supplyChainTypeLabel(type),
+    name: type === "farm" && farmName ? farmName : supplyChainTypeLabel(type),
     geometry,
+    ...(farmMetrics ? { farmMetrics } : {}),
   });
   renderSupplyChainStops();
   setStatus(`${supplyChainTypeLabel(type)} added to the farm-to-fork route.`);
@@ -860,7 +943,9 @@ function resetDrawMode() {
   polygonPoints = [];
   drawButton.classList.remove("is-active");
   drawPolygonButton?.classList.remove("is-active");
+  draw3dPolygonButton?.classList.remove("is-active");
   if (drawPolygonButton) drawPolygonButton.textContent = "Draw Polygon";
+  if (draw3dPolygonButton) draw3dPolygonButton.textContent = "Draw Polygon";
   if (previewArea) {
     map.removeLayer(previewArea);
     previewArea = null;
@@ -879,7 +964,9 @@ function startDrawMode() {
   polygonPoints = [];
   drawButton.classList.add("is-active");
   drawPolygonButton?.classList.remove("is-active");
+  draw3dPolygonButton?.classList.remove("is-active");
   if (drawPolygonButton) drawPolygonButton.textContent = "Draw Polygon";
+  if (draw3dPolygonButton) draw3dPolygonButton.textContent = "Draw Polygon";
   map.getContainer().style.cursor = "crosshair";
   setStatus("Draw box mode: click the first corner, then click the opposite corner.");
 }
@@ -891,7 +978,9 @@ function startPolygonDrawMode() {
   polygonPoints = [];
   drawButton.classList.remove("is-active");
   drawPolygonButton?.classList.add("is-active");
+  draw3dPolygonButton?.classList.add("is-active");
   if (drawPolygonButton) drawPolygonButton.textContent = "Finish Polygon";
+  if (draw3dPolygonButton) draw3dPolygonButton.textContent = "Finish Polygon";
   if (previewArea) {
     map.removeLayer(previewArea);
     previewArea = null;
@@ -979,6 +1068,14 @@ drawButton.addEventListener("click", () => {
 });
 
 drawPolygonButton?.addEventListener("click", () => {
+  if (polygonDrawMode) {
+    finishPolygonDrawMode();
+  } else {
+    startPolygonDrawMode();
+  }
+});
+
+draw3dPolygonButton?.addEventListener("click", () => {
   if (polygonDrawMode) {
     finishPolygonDrawMode();
   } else {
@@ -2526,6 +2623,7 @@ setActiveDateRange(initialDateRange);
 updateBboxReadout();
 refreshSavedSupplyChainSelect();
 renderSupplyChainStops();
+updateFarmDataPanel();
 document.getElementById("apply-map-date-range").addEventListener("click", () => {
   const range = {
     startDate: document.getElementById("map-range-start").value,

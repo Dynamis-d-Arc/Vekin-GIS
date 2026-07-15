@@ -42,6 +42,11 @@ export default function ThreeDMapPage() {
               <option value="end-product">End product destination</option>
             </select>
           </label>
+          <div id="three-d-farm-panel" className="hidden" aria-live="polite">
+            <span>Selected farm</span>
+            <strong id="three-d-farm-title">Farm</strong>
+            <p id="three-d-farm-summary">No farm selected.</p>
+          </div>
           <div className="three-d-layer-list" aria-label="3D map layers">
             <label className="three-d-toggle-row" htmlFor="three-d-satellite-layer">
               <input id="three-d-satellite-layer" type="checkbox" defaultChecked />

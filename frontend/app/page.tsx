@@ -90,16 +90,28 @@ export default function MapPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Button
-                  id="toggle-process-form"
+                  id="show-2d-gis-form"
                   type="button"
                   aria-controls="process-form"
-                  aria-expanded="true"
+                  aria-pressed="true"
                   className={mapControlButtonClass}
                   color="alternative"
                   size="xs"
                 >
-                  <span className={mapControlIconClass} aria-hidden="true">-</span>
-                  <span>Hide form</span>
+                  <span className={mapControlIconClass} aria-hidden="true">2D</span>
+                  <span>2D GIS</span>
+                </Button>
+                <Button
+                  id="show-3d-ftf-form"
+                  type="button"
+                  aria-controls="three-d-route-form"
+                  aria-pressed="false"
+                  className={mapControlButtonClass}
+                  color="alternative"
+                  size="xs"
+                >
+                  <span className={mapControlIconClass} aria-hidden="true">3D</span>
+                  <span>3D FTF</span>
                 </Button>
                 <Button
                   id="toggle-map-fullscreen"
@@ -117,14 +129,15 @@ export default function MapPage() {
             </div>
 
             <div className="map-stage">
+              <div id="map-control-stack" className="map-control-stack absolute left-3 top-3 z-[430] grid max-h-[calc(100%-24px)] w-[min(360px,calc(100%-24px))] gap-2 overflow-y-auto text-cyan-50">
               <form
                 id="process-form"
-                aria-label="Map processing controls"
-                className="process-form-panel absolute left-3 top-3 z-[430] grid max-h-[calc(100%-24px)] w-[min(340px,calc(100%-24px))] gap-2 overflow-y-auto rounded-xl border border-cyan-200/20 p-3.5 text-cyan-50"
+                aria-label="2D map processing controls"
+                className="process-form-panel grid gap-2 rounded-xl border border-cyan-200/20 p-3.5"
               >
               <header className="process-form-header">
                 <div>
-                  <span>Analysis workspace</span>
+                  <span>2D analysis</span>
                   <strong>Process satellite grid</strong>
                 </div>
                 <Button className="fb-button" color="alternative" size="xs" id="close-process-form" type="button" aria-label="Close processing form">×</Button>
@@ -153,6 +166,47 @@ export default function MapPage() {
                 <span>Selected bounds</span>
                 <strong id="bbox-label" className="text-xs leading-snug text-cyan-50">No area selected</strong>
               </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className={labelClass}>
+                  <Label htmlFor="date">Start</Label>
+                  <TextInput className={inputClass} sizing="sm" id="date" type="date" required />
+                </div>
+                <div className={labelClass}>
+                  <Label htmlFor="end-date">End</Label>
+                  <TextInput className={inputClass} sizing="sm" id="end-date" type="date" required />
+                </div>
+              </div>
+              <div className={`${labelClass} process-field-full`}>
+                <Label htmlFor="cloud">Max cloud cover</Label>
+                <TextInput className={inputClass} sizing="sm" id="cloud" type="number" min="0" max="100" defaultValue="40" />
+              </div>
+              <Button className={buttonClass} color="green" size="sm" type="submit">Process Grid</Button>
+              <p id="status" className="m-0 text-sm leading-snug text-cyan-100/75">
+                Select an area, choose a date range, then process.
+              </p>
+              </form>
+
+              <section
+                id="three-d-route-form"
+                aria-label="3D farm route controls"
+                className="process-form-panel grid gap-2 rounded-xl border border-emerald-300/20 p-3.5"
+              >
+              <header className="process-form-header">
+                <div>
+                  <span>3D route</span>
+                  <strong>Farm route &amp; cows</strong>
+                </div>
+                <Button
+                  className={`${secondaryButtonClass} hidden`}
+                  color="alternative"
+                  id="view-3d-terrain"
+                  size="xs"
+                  type="button"
+                >
+                  View 3D terrain
+                </Button>
+              </header>
+              <Button className={secondaryButtonClass} color="alternative" size="sm" id="draw-3d-polygon-button" type="button">Draw Polygon</Button>
               <div className={`${labelClass} process-field-full`}>
                 <Label htmlFor="building-type">Building label</Label>
                 <select id="building-type" className={inputClass} defaultValue="farm">
@@ -163,6 +217,43 @@ export default function MapPage() {
                   <option value="retailer">Retailer</option>
                   <option value="end-product">End product destination</option>
                 </select>
+              </div>
+              <div id="farm-data-panel" className="grid gap-2 rounded-md border border-emerald-300/25 bg-emerald-400/10 p-2.5 text-xs text-cyan-100/70">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Farm data</span>
+                  <strong className="text-lime-200">Cow metrics</strong>
+                </div>
+                <TextInput
+                  className={inputClass}
+                  sizing="sm"
+                  id="farm-name"
+                  type="text"
+                  placeholder="Farm name"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <div className={labelClass}>
+                    <Label htmlFor="farm-cow-count">Cows</Label>
+                    <TextInput className={inputClass} sizing="sm" id="farm-cow-count" type="number" min="0" placeholder="120" />
+                  </div>
+                  <div className={labelClass}>
+                    <Label htmlFor="farm-herd-type">Herd type</Label>
+                    <select id="farm-herd-type" className={inputClass} defaultValue="mixed">
+                      <option value="dairy">Dairy</option>
+                      <option value="beef">Beef</option>
+                      <option value="mixed">Mixed</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className={labelClass}>
+                    <Label htmlFor="farm-daily-output">Daily output</Label>
+                    <TextInput className={inputClass} sizing="sm" id="farm-daily-output" type="number" min="0" placeholder="kg/day" />
+                  </div>
+                  <div className={labelClass}>
+                    <Label htmlFor="farm-co2e">CO2e/day</Label>
+                    <TextInput className={inputClass} sizing="sm" id="farm-co2e" type="number" min="0" placeholder="kg" />
+                  </div>
+                </div>
               </div>
               <div className="grid gap-2 rounded-md border border-cyan-200/25 bg-slate-950/80 p-2.5 text-xs text-cyan-100/70">
                 <div className="flex items-center justify-between gap-2">
@@ -198,34 +289,8 @@ export default function MapPage() {
                   View farm-to-fork 3D
                 </Button>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className={labelClass}>
-                  <Label htmlFor="date">Start</Label>
-                  <TextInput className={inputClass} sizing="sm" id="date" type="date" required />
-                </div>
-                <div className={labelClass}>
-                  <Label htmlFor="end-date">End</Label>
-                  <TextInput className={inputClass} sizing="sm" id="end-date" type="date" required />
-                </div>
+              </section>
               </div>
-              <div className={`${labelClass} process-field-full`}>
-                <Label htmlFor="cloud">Max cloud cover</Label>
-                <TextInput className={inputClass} sizing="sm" id="cloud" type="number" min="0" max="100" defaultValue="40" />
-              </div>
-              <Button className={buttonClass} color="green" size="sm" type="submit">Process Grid</Button>
-              <Button
-                className={`${secondaryButtonClass} hidden`}
-                color="alternative"
-                id="view-3d-terrain"
-                size="sm"
-                type="button"
-              >
-                View 3D terrain
-              </Button>
-              <p id="status" className="m-0 text-sm leading-snug text-cyan-100/75">
-                Select an area, choose a date range, then process.
-              </p>
-              </form>
 
               <div
                 id="map"

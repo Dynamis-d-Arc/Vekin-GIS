@@ -42,17 +42,34 @@ type FootprintGeometry = {
   type: "Polygon" | "MultiPolygon";
   coordinates: number[][][] | number[][][][];
 };
+type FarmMetrics = {
+  cowCount?: number;
+  herdType?: "dairy" | "beef" | "mixed";
+  dailyOutputKg?: number;
+  co2eKgPerDay?: number;
+};
 type SupplyChainStop = {
   id?: string;
   type: BuildingType;
   name?: string;
   geometry: FootprintGeometry;
+  farmMetrics?: FarmMetrics;
 };
 type RouteCenter = {
   longitude: number;
   latitude: number;
   height: number;
   label: string;
+  stopId?: string;
+  stopIndex: number;
+  stopType: BuildingType;
+};
+type RouteLeg = {
+  id: string;
+  from: RouteCenter;
+  to: RouteCenter;
+  label: string;
+  direction: "inbound" | "outbound" | "chain";
 };
 type RoadRouteResult = {
   positions: import("cesium").Cartesian3[];
@@ -186,19 +203,50 @@ function parseSupplyChainRoute(value: string | null): SupplyChainStop[] {
     if (!Array.isArray(parsed)) return [];
     return parsed.flatMap((stop, index) => {
       if (!stop || typeof stop !== "object") return [];
-      const candidate = stop as { id?: string; type?: string; name?: string; geometry?: FootprintGeometry };
+      const candidate = stop as { id?: string; type?: string; name?: string; geometry?: FootprintGeometry; farmMetrics?: FarmMetrics };
       const geometry = candidate.geometry;
       if (!geometry || (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon")) return [];
+      const type = buildingTypeFromValue(candidate.type || null);
       return [{
         id: candidate.id || `route-stop-${index + 1}`,
-        type: buildingTypeFromValue(candidate.type || null),
+        type,
         name: candidate.name,
         geometry,
+        ...(type === "farm" ? { farmMetrics: normalizeFarmMetrics(candidate.farmMetrics) } : {}),
       }];
     });
   } catch {
     return [];
   }
+}
+
+function normalizeFarmMetrics(metrics: FarmMetrics | undefined): FarmMetrics {
+  const normalized: FarmMetrics = {};
+  const cowCount = Number(metrics?.cowCount);
+  const dailyOutputKg = Number(metrics?.dailyOutputKg);
+  const co2eKgPerDay = Number(metrics?.co2eKgPerDay);
+  if (Number.isFinite(cowCount) && cowCount >= 0) normalized.cowCount = cowCount;
+  if (metrics?.herdType === "dairy" || metrics?.herdType === "beef" || metrics?.herdType === "mixed") {
+    normalized.herdType = metrics.herdType;
+  }
+  if (Number.isFinite(dailyOutputKg) && dailyOutputKg >= 0) normalized.dailyOutputKg = dailyOutputKg;
+  if (Number.isFinite(co2eKgPerDay) && co2eKgPerDay >= 0) normalized.co2eKgPerDay = co2eKgPerDay;
+  return normalized;
+}
+
+function farmMetricsSummary(metrics: FarmMetrics | undefined) {
+  if (!metrics) return "";
+  const parts = [];
+  if (Number.isFinite(metrics.cowCount)) parts.push(`Cows: ${metrics.cowCount!.toLocaleString()}`);
+  if (metrics.herdType) parts.push(`Herd: ${metrics.herdType}`);
+  if (Number.isFinite(metrics.dailyOutputKg)) parts.push(`Output: ${metrics.dailyOutputKg!.toLocaleString()} kg/day`);
+  if (Number.isFinite(metrics.co2eKgPerDay)) parts.push(`CO2e: ${metrics.co2eKgPerDay!.toLocaleString()} kg/day`);
+  return parts.join(" | ");
+}
+
+function farmLabelText(label: string, metrics: FarmMetrics | undefined) {
+  const cowText = Number.isFinite(metrics?.cowCount) ? ` | ${metrics!.cowCount!.toLocaleString()} cows` : "";
+  return `${label}${cowText}`;
 }
 
 function terrainRequestFromUrl(): TerrainRequest {
@@ -363,6 +411,48 @@ function routePositionsFromCenters(Cesium: CesiumGlobal, centers: RouteCenter[])
   return Cesium.Cartesian3.fromDegreesArrayHeights(
     centers.flatMap((center) => [center.longitude, center.latitude, center.height + ROUTE_LINE_HEIGHT_METERS]),
   );
+}
+
+function supplyNetworkHubIndex(stops: SupplyChainStop[]) {
+  const primaryHubIndex = stops.findIndex((stop) => stop.type === "processor");
+  if (primaryHubIndex >= 0) return primaryHubIndex;
+  const secondaryHubIndex = stops.findIndex((stop) => stop.type === "warehouse" || stop.type === "middle-man");
+  return secondaryHubIndex >= 0 ? secondaryHubIndex : -1;
+}
+
+function routeLegsFromCenters(centers: RouteCenter[], stops: SupplyChainStop[]): RouteLeg[] {
+  if (centers.length < 2) return [];
+  const hubIndex = supplyNetworkHubIndex(stops);
+  const hub = hubIndex >= 0 ? centers.find((center) => center.stopIndex === hubIndex) : null;
+  if (!hub) {
+    return centers.slice(0, -1).map((from, index) => {
+      const to = centers[index + 1]!;
+      return {
+        id: `chain-${index + 1}`,
+        from,
+        to,
+        label: `${from.label} to ${to.label}`,
+        direction: "chain",
+      };
+    });
+  }
+
+  return centers
+    .filter((center) => center !== hub)
+    .map((center) => {
+      const isSource = center.stopType === "farm" || center.stopType === "middle-man";
+      const isDestination = center.stopType === "retailer" || center.stopType === "end-product";
+      const inbound = isSource || (!isDestination && center.stopIndex < hub.stopIndex);
+      const from = inbound ? center : hub;
+      const to = inbound ? hub : center;
+      return {
+        id: `${from.stopId || from.stopIndex}-${to.stopId || to.stopIndex}`,
+        from,
+        to,
+        label: `${from.label} to ${to.label}`,
+        direction: inbound ? "inbound" : "outbound",
+      };
+    });
 }
 
 async function snapRouteCenterToRoad(center: RouteCenter): Promise<{ center: RouteCenter; distanceMeters: number | null }> {
@@ -627,6 +717,9 @@ export function ThreeDMapRuntime() {
     const rotateLeftButton = document.getElementById("three-d-rotate-left");
     const rotateRightButton = document.getElementById("three-d-rotate-right");
     const titleNode = document.getElementById("three-d-title");
+    const farmPanel = document.getElementById("three-d-farm-panel");
+    const farmTitleNode = document.getElementById("three-d-farm-title");
+    const farmSummaryNode = document.getElementById("three-d-farm-summary");
 
     if (!container) return;
 
@@ -779,13 +872,16 @@ export function ThreeDMapRuntime() {
         }
       }
       const routeCenters: RouteCenter[] = [];
-      routeStopsForRequest(terrainRequest).forEach((stop, stopIndex) => {
+      const routeStops = routeStopsForRequest(terrainRequest);
+      routeStops.forEach((stop, stopIndex) => {
         footprintRings(stop.geometry).forEach((ring, ringIndex) => {
           const style = buildingStyle(Cesium, stop.type);
           const label = stop.name || style.label;
+          const farmSummary = stop.type === "farm" ? farmMetricsSummary(stop.farmMetrics) : "";
+          const displayLabel = stop.type === "farm" ? farmLabelText(label, stop.farmMetrics) : label;
           const coordinates = ring.flatMap(([longitude, latitude]) => [longitude, latitude]);
           const buildingEntity = viewer?.entities.add({
-            name: `${label} building`,
+            name: `${displayLabel} building`,
             polygon: {
               hierarchy: Cesium.Cartesian3.fromDegreesArray(coordinates),
               material: style.color.withAlpha(0.72),
@@ -800,6 +896,8 @@ export function ThreeDMapRuntime() {
               type: "building",
               buildingType: stop.type,
               routeIndex: stopIndex + 1,
+              label,
+              farmSummary,
             },
           });
           if (buildingEntity) buildingEntities.push(buildingEntity);
@@ -810,14 +908,17 @@ export function ThreeDMapRuntime() {
               longitude: centroid.longitude,
               latitude: centroid.latitude,
               height: style.height,
-              label,
+              label: displayLabel,
+              stopId: stop.id,
+              stopIndex,
+              stopType: stop.type,
             });
           }
           const labelEntity = viewer?.entities.add({
-            name: `${label} label`,
+            name: `${displayLabel} label`,
             position: Cesium.Cartesian3.fromDegrees(centroid.longitude, centroid.latitude, style.height + 16),
             label: {
-              text: `${stopIndex + 1}. ${label}`,
+              text: `${stopIndex + 1}. ${displayLabel}`,
               font: "800 14px sans-serif",
               fillColor: Cesium.Color.WHITE,
               outlineColor: Cesium.Color.BLACK,
@@ -826,48 +927,76 @@ export function ThreeDMapRuntime() {
               pixelOffset: new Cesium.Cartesian2(0, -10 - ringIndex * 4),
               disableDepthTestDistance: Number.POSITIVE_INFINITY,
             },
+            properties: {
+              type: "building-label",
+              buildingType: stop.type,
+              routeIndex: stopIndex + 1,
+              label,
+              farmSummary,
+            },
           });
           if (labelEntity) buildingLabelEntities.push(labelEntity);
         });
       });
-      let shipmentPath = routePositionsFromCenters(Cesium, routeCenters);
-      const routeOutlineEntity = routeCenters.length > 1 ? viewer?.entities.add({
-        name: "Farm-to-fork road route outline",
-        polyline: {
-          positions: shipmentPath,
-          width: 14,
-          material: Cesium.Color.WHITE.withAlpha(0.92),
-          clampToGround: true,
-          zIndex: 9,
-        },
-      }) : null;
-      if (routeOutlineEntity) routeEntities.push(routeOutlineEntity);
+      const routeLegs = routeLegsFromCenters(routeCenters, routeStops);
+      const shipmentPaths = routeLegs.map((leg) => routePositionsFromCenters(Cesium, [leg.from, leg.to]));
+      const routeVisuals = routeLegs.map((leg, legIndex) => {
+        const shipmentPath = shipmentPaths[legIndex] || [];
+        const routeColor = leg.direction === "inbound"
+          ? Cesium.Color.RED
+          : leg.direction === "outbound"
+            ? Cesium.Color.ROYALBLUE
+            : Cesium.Color.BLACK;
+        const routeOutlineEntity = viewer?.entities.add({
+          name: `Farm-to-fork road route outline: ${leg.label}`,
+          polyline: {
+            positions: shipmentPath,
+            width: 14,
+            material: Cesium.Color.WHITE.withAlpha(0.92),
+            clampToGround: true,
+            zIndex: 9,
+          },
+        });
+        if (routeOutlineEntity) routeEntities.push(routeOutlineEntity);
 
-      const routeEntity = routeCenters.length > 1 ? viewer?.entities.add({
-        name: "Farm-to-fork road route",
-        polyline: {
-          positions: shipmentPath,
-          width: 8,
-          material: Cesium.Color.BLACK.withAlpha(0.98),
-          clampToGround: true,
-          zIndex: 10,
-        },
-      }) : null;
-      if (routeEntity) routeEntities.push(routeEntity);
+        const routeEntity = viewer?.entities.add({
+          name: `Farm-to-fork road route: ${leg.label}`,
+          polyline: {
+            positions: shipmentPath,
+            width: 8,
+            material: routeColor.withAlpha(0.98),
+            clampToGround: true,
+            zIndex: 10,
+          },
+        });
+        if (routeEntity) routeEntities.push(routeEntity);
+        return { leg, routeEntity, routeOutlineEntity };
+      });
       const updateRoadRoute = async () => {
-        if (!routeEntity?.polyline || routeCenters.length < 2) return;
+        if (!routeVisuals.length) return;
+        let loadedLegs = 0;
+        let snappedCount = 0;
+        let maxSnapDistanceMeters = 0;
         try {
-          const roadRoute = await fetchRoadRoutePositions(Cesium, routeCenters);
-          if (!roadRoute?.positions.length || disposed) return;
-          shipmentPath = roadRoute.positions;
-          if (routeOutlineEntity?.polyline) {
-            routeOutlineEntity.polyline.positions = new Cesium.ConstantProperty(roadRoute.positions);
-          }
-          routeEntity.polyline.positions = new Cesium.ConstantProperty(roadRoute.positions);
-          const snapNote = roadRoute.snappedCount
-            ? ` Snapped ${roadRoute.snappedCount.toLocaleString()} stop${roadRoute.snappedCount === 1 ? "" : "s"} to nearby roads, max ${Math.round(roadRoute.maxSnapDistanceMeters).toLocaleString()} m.`
+          await Promise.all(routeVisuals.map(async ({ leg, routeEntity, routeOutlineEntity }, legIndex) => {
+            if (!routeEntity?.polyline) return;
+            const roadRoute = await fetchRoadRoutePositions(Cesium, [leg.from, leg.to]);
+            if (!roadRoute?.positions.length || disposed) return;
+            shipmentPaths[legIndex] = roadRoute.positions;
+            if (routeOutlineEntity?.polyline) {
+              routeOutlineEntity.polyline.positions = new Cesium.ConstantProperty(roadRoute.positions);
+            }
+            routeEntity.polyline.positions = new Cesium.ConstantProperty(roadRoute.positions);
+            loadedLegs += 1;
+            snappedCount += roadRoute.snappedCount;
+            maxSnapDistanceMeters = Math.max(maxSnapDistanceMeters, roadRoute.maxSnapDistanceMeters);
+          }));
+          if (!loadedLegs || disposed) return;
+          const snapNote = snappedCount
+            ? ` Snapped ${snappedCount.toLocaleString()} stop${snappedCount === 1 ? "" : "s"} to nearby roads, max ${Math.round(maxSnapDistanceMeters).toLocaleString()} m.`
             : "";
-          setStatus(`Road-following route loaded for ${routeCenters.length.toLocaleString()} stops.${snapNote}`);
+          const hubNote = supplyNetworkHubIndex(routeStops) >= 0 ? " supply-network" : "";
+          setStatus(`Road-following${hubNote} route loaded for ${loadedLegs.toLocaleString()} leg${loadedLegs === 1 ? "" : "s"}.${snapNote}`);
           viewer?.scene.requestRender();
         } catch {
           setStatus(`Farm-to-fork route shown as direct lines. No routable road was found within ${RURAL_ROAD_SNAP_RADIUS_METERS.toLocaleString()} m of one or more stops, or road routing was unavailable.`);
@@ -875,14 +1004,15 @@ export function ThreeDMapRuntime() {
       };
       updateRoadRoute();
 
-      if (routeCenters.length > 1) {
-        const startTime = Cesium.JulianDate.now();
+      routeLegs.forEach((leg, legIndex) => {
+        const pathForLeg = () => shipmentPaths[legIndex] || [];
+        if (pathForLeg().length <= 1) return;
+        const startTime = Cesium.JulianDate.addSeconds(Cesium.JulianDate.now(), legIndex * 1.5, new Cesium.JulianDate());
         const shipmentPosition = new Cesium.CallbackPositionProperty((time, result) => {
           const segmentSeconds = 5;
           const elapsed = Math.max(0, Cesium.JulianDate.secondsDifference(time || Cesium.JulianDate.now(), startTime));
-          const path = shipmentPath;
-          const firstCenter = routeCenters[0]!;
-          const firstPoint = path[0] || Cesium.Cartesian3.fromDegrees(firstCenter.longitude, firstCenter.latitude, firstCenter.height + 55);
+          const path = pathForLeg();
+          const firstPoint = path[0] || Cesium.Cartesian3.fromDegrees(leg.from.longitude, leg.from.latitude, leg.from.height + 55);
           if (path.length < 2) return firstPoint;
           const segmentIndex = Math.floor(elapsed / segmentSeconds) % (path.length - 1);
           const segmentProgress = (elapsed % segmentSeconds) / segmentSeconds;
@@ -891,7 +1021,7 @@ export function ThreeDMapRuntime() {
           return Cesium.Cartesian3.lerp(from, to, segmentProgress, result || new Cesium.Cartesian3());
         }, false);
         const shipmentEntity = viewer?.entities.add({
-          name: "Animated shipment",
+          name: `Animated shipment: ${leg.label}`,
           position: shipmentPosition,
           point: {
             pixelSize: 14,
@@ -912,7 +1042,7 @@ export function ThreeDMapRuntime() {
           },
         });
         if (shipmentEntity) shipmentEntities.push(shipmentEntity);
-      }
+      });
       cowPointsForBoundary(terrainRequest).forEach((cow) => {
         const cowEntity = viewer?.entities.add({
           name: cow.id,
@@ -943,6 +1073,42 @@ export function ThreeDMapRuntime() {
         });
         if (cowEntity) cowEntities.push(cowEntity);
       });
+
+      const pickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+      const showFarmMetrics = (entity: import("cesium").Entity, source: "hover" | "click") => {
+        const properties = entity?.properties;
+        const buildingType = properties?.buildingType?.getValue(Cesium.JulianDate.now());
+        if (buildingType !== "farm") return false;
+        const label = properties?.label?.getValue(Cesium.JulianDate.now()) || entity?.name || "Farm";
+        const farmSummary = properties?.farmSummary?.getValue(Cesium.JulianDate.now()) || "No cow metrics entered for this farm.";
+        farmPanel?.classList.remove("hidden");
+        if (farmTitleNode) farmTitleNode.textContent = label;
+        if (farmSummaryNode) farmSummaryNode.textContent = farmSummary;
+        setStatus(`${source === "hover" ? "Farm hover" : "Farm selected"} - ${label}: ${farmSummary}`);
+        return true;
+      };
+      const farmEntityFromPosition = (position: import("cesium").Cartesian2 | undefined) => {
+        if (!position) return null;
+        const pickedItems = [
+          viewer?.scene.pick(position),
+          ...(viewer?.scene.drillPick(position, 12, 5, 5) || []),
+        ];
+        for (const picked of pickedItems) {
+          const entity = (picked?.id || picked?.primitive?.id) as import("cesium").Entity | undefined;
+          const buildingType = entity?.properties?.buildingType?.getValue(Cesium.JulianDate.now());
+          if (buildingType === "farm") return entity;
+        }
+        return null;
+      };
+      pickHandler.setInputAction((movement: { position: import("cesium").Cartesian2 }) => {
+        const entity = farmEntityFromPosition(movement.position);
+        if (entity) showFarmMetrics(entity, "click");
+      }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+      pickHandler.setInputAction((movement: { endPosition?: import("cesium").Cartesian2 }) => {
+        const entity = farmEntityFromPosition(movement.endPosition);
+        viewer!.scene.canvas.style.cursor = entity ? "pointer" : "";
+        if (entity) showFarmMetrics(entity, "hover");
+      }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
       const applyLayerVisibility = () => {
         if (!viewer) return;
@@ -1177,6 +1343,7 @@ export function ThreeDMapRuntime() {
         resetButton?.removeEventListener("click", setCinematicCamera);
         rotateLeftButton?.removeEventListener("click", rotateLeft);
         rotateRightButton?.removeEventListener("click", rotateRight);
+        pickHandler.destroy();
       };
     };
 
