@@ -48,6 +48,17 @@ type SupplyChainStop = {
   name?: string;
   geometry: FootprintGeometry;
 };
+type RouteCenter = {
+  longitude: number;
+  latitude: number;
+  height: number;
+  label: string;
+};
+type RoadRouteResult = {
+  positions: import("cesium").Cartesian3[];
+  snappedCount: number;
+  maxSnapDistanceMeters: number;
+};
 
 declare global {
   interface Window {
@@ -58,6 +69,8 @@ declare global {
 
 const DEFAULT_LATITUDE = 14.975972;
 const DEFAULT_LONGITUDE = 101.42225;
+const RURAL_ROAD_SNAP_RADIUS_METERS = 2500;
+const ROUTE_LINE_HEIGHT_METERS = 260;
 const COW_MODEL_URI = "/models/GLB_Cow.glb";
 const COW_BOUNDARY: Boundary = {
   west: 101.3111,
@@ -332,6 +345,80 @@ function proxiedImageUrl(url: string) {
     return url.replace(/^https?:\/\/(localhost|127\.0\.0\.1):8000/, apiBase());
   }
   return url;
+}
+
+function roadNearestUrl(center: RouteCenter) {
+  return `https://router.project-osrm.org/nearest/v1/driving/${center.longitude.toFixed(6)},${center.latitude.toFixed(6)}?number=1`;
+}
+
+function roadRouteUrl(centers: RouteCenter[]) {
+  const coordinates = centers
+    .map((center) => `${center.longitude.toFixed(6)},${center.latitude.toFixed(6)}`)
+    .join(";");
+  const radiuses = centers.map(() => String(RURAL_ROAD_SNAP_RADIUS_METERS)).join(";");
+  return `https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=full&geometries=geojson&radiuses=${radiuses}&continue_straight=false`;
+}
+
+function routePositionsFromCenters(Cesium: CesiumGlobal, centers: RouteCenter[]) {
+  return Cesium.Cartesian3.fromDegreesArrayHeights(
+    centers.flatMap((center) => [center.longitude, center.latitude, center.height + ROUTE_LINE_HEIGHT_METERS]),
+  );
+}
+
+async function snapRouteCenterToRoad(center: RouteCenter): Promise<{ center: RouteCenter; distanceMeters: number | null }> {
+  const response = await fetch(roadNearestUrl(center));
+  if (!response.ok) return { center, distanceMeters: null };
+  const payload = await response.json() as {
+    code?: string;
+    waypoints?: { distance?: number; location?: [number, number] }[];
+  };
+  const waypoint = payload.waypoints?.[0];
+  const distanceMeters = Number(waypoint?.distance);
+  const location = waypoint?.location;
+  if (
+    payload.code !== "Ok"
+    || !Array.isArray(location)
+    || !Number.isFinite(distanceMeters)
+    || distanceMeters > RURAL_ROAD_SNAP_RADIUS_METERS
+  ) {
+    return { center, distanceMeters: Number.isFinite(distanceMeters) ? distanceMeters : null };
+  }
+  return {
+    center: {
+      ...center,
+      longitude: location[0],
+      latitude: location[1],
+    },
+    distanceMeters,
+  };
+}
+
+async function fetchRoadRoutePositions(Cesium: CesiumGlobal, centers: RouteCenter[]): Promise<RoadRouteResult | null> {
+  if (centers.length < 2) return null;
+  const snapped = await Promise.all(centers.map((center) => snapRouteCenterToRoad(center)));
+  const routeCenters = snapped.map((item) => item.center);
+  const snapDistances = snapped
+    .map((item) => item.distanceMeters)
+    .filter((distance): distance is number => Number.isFinite(distance));
+  const response = await fetch(roadRouteUrl(routeCenters));
+  if (!response.ok) throw new Error(`Road routing returned ${response.status}`);
+  const payload = await response.json() as {
+    code?: string;
+    routes?: { geometry?: { type?: string; coordinates?: [number, number][] } }[];
+  };
+  const coordinates = payload.routes?.[0]?.geometry?.coordinates;
+  if (payload.code !== "Ok" || !Array.isArray(coordinates) || coordinates.length < 2) return null;
+  const maxHeight = Math.max(...centers.map((center) => center.height)) + ROUTE_LINE_HEIGHT_METERS;
+  return {
+    positions: Cesium.Cartesian3.fromDegreesArrayHeights(
+      coordinates.flatMap(([longitude, latitude]) => [longitude, latitude, maxHeight]),
+    ),
+    snappedCount: snapped.filter((item, index) => (
+      item.center.longitude !== centers[index]!.longitude
+      || item.center.latitude !== centers[index]!.latitude
+    )).length,
+    maxSnapDistanceMeters: snapDistances.length ? Math.max(...snapDistances) : 0,
+  };
 }
 
 function buildingTypeLabel(buildingType: BuildingType) {
@@ -691,7 +778,7 @@ export function ThreeDMapRuntime() {
           selectionEntities.push(selectionEntity);
         }
       }
-      const routeCenters: { longitude: number; latitude: number; height: number; label: string }[] = [];
+      const routeCenters: RouteCenter[] = [];
       routeStopsForRequest(terrainRequest).forEach((stop, stopIndex) => {
         footprintRings(stop.geometry).forEach((ring, ringIndex) => {
           const style = buildingStyle(Cesium, stop.type);
@@ -743,43 +830,65 @@ export function ThreeDMapRuntime() {
           if (labelEntity) buildingLabelEntities.push(labelEntity);
         });
       });
-      routeCenters.slice(0, -1).forEach((center, index) => {
-        const next = routeCenters[index + 1];
-        const routeEntity = viewer?.entities.add({
-          name: `${center.label} to ${next.label}`,
-          polyline: {
-            positions: Cesium.Cartesian3.fromDegreesArrayHeights([
-              center.longitude,
-              center.latitude,
-              center.height + 38,
-              next.longitude,
-              next.latitude,
-              next.height + 38,
-            ]),
-            width: 6,
-            material: new Cesium.PolylineGlowMaterialProperty({
-              glowPower: 0.18,
-              taperPower: 0.65,
-              color: Cesium.Color.fromCssColorString("#d9f99d").withAlpha(0.92),
-            }),
-            clampToGround: false,
-          },
-        });
-        if (routeEntity) routeEntities.push(routeEntity);
-      });
+      let shipmentPath = routePositionsFromCenters(Cesium, routeCenters);
+      const routeOutlineEntity = routeCenters.length > 1 ? viewer?.entities.add({
+        name: "Farm-to-fork road route outline",
+        polyline: {
+          positions: shipmentPath,
+          width: 14,
+          material: Cesium.Color.WHITE.withAlpha(0.92),
+          clampToGround: true,
+          zIndex: 9,
+        },
+      }) : null;
+      if (routeOutlineEntity) routeEntities.push(routeOutlineEntity);
+
+      const routeEntity = routeCenters.length > 1 ? viewer?.entities.add({
+        name: "Farm-to-fork road route",
+        polyline: {
+          positions: shipmentPath,
+          width: 8,
+          material: Cesium.Color.BLACK.withAlpha(0.98),
+          clampToGround: true,
+          zIndex: 10,
+        },
+      }) : null;
+      if (routeEntity) routeEntities.push(routeEntity);
+      const updateRoadRoute = async () => {
+        if (!routeEntity?.polyline || routeCenters.length < 2) return;
+        try {
+          const roadRoute = await fetchRoadRoutePositions(Cesium, routeCenters);
+          if (!roadRoute?.positions.length || disposed) return;
+          shipmentPath = roadRoute.positions;
+          if (routeOutlineEntity?.polyline) {
+            routeOutlineEntity.polyline.positions = new Cesium.ConstantProperty(roadRoute.positions);
+          }
+          routeEntity.polyline.positions = new Cesium.ConstantProperty(roadRoute.positions);
+          const snapNote = roadRoute.snappedCount
+            ? ` Snapped ${roadRoute.snappedCount.toLocaleString()} stop${roadRoute.snappedCount === 1 ? "" : "s"} to nearby roads, max ${Math.round(roadRoute.maxSnapDistanceMeters).toLocaleString()} m.`
+            : "";
+          setStatus(`Road-following route loaded for ${routeCenters.length.toLocaleString()} stops.${snapNote}`);
+          viewer?.scene.requestRender();
+        } catch {
+          setStatus(`Farm-to-fork route shown as direct lines. No routable road was found within ${RURAL_ROAD_SNAP_RADIUS_METERS.toLocaleString()} m of one or more stops, or road routing was unavailable.`);
+        }
+      };
+      updateRoadRoute();
+
       if (routeCenters.length > 1) {
         const startTime = Cesium.JulianDate.now();
         const shipmentPosition = new Cesium.CallbackPositionProperty((time, result) => {
           const segmentSeconds = 5;
           const elapsed = Math.max(0, Cesium.JulianDate.secondsDifference(time || Cesium.JulianDate.now(), startTime));
-          const segmentIndex = Math.floor(elapsed / segmentSeconds) % (routeCenters.length - 1);
+          const path = shipmentPath;
+          const firstCenter = routeCenters[0]!;
+          const firstPoint = path[0] || Cesium.Cartesian3.fromDegrees(firstCenter.longitude, firstCenter.latitude, firstCenter.height + 55);
+          if (path.length < 2) return firstPoint;
+          const segmentIndex = Math.floor(elapsed / segmentSeconds) % (path.length - 1);
           const segmentProgress = (elapsed % segmentSeconds) / segmentSeconds;
-          const from = routeCenters[segmentIndex];
-          const to = routeCenters[segmentIndex + 1];
-          const longitude = from.longitude + (to.longitude - from.longitude) * segmentProgress;
-          const latitude = from.latitude + (to.latitude - from.latitude) * segmentProgress;
-          const height = Math.max(from.height, to.height) + 55;
-          return Cesium.Cartesian3.fromDegrees(longitude, latitude, height, undefined, result);
+          const from = path[segmentIndex] ?? firstPoint;
+          const to = path[segmentIndex + 1] ?? firstPoint;
+          return Cesium.Cartesian3.lerp(from, to, segmentProgress, result || new Cesium.Cartesian3());
         }, false);
         const shipmentEntity = viewer?.entities.add({
           name: "Animated shipment",
