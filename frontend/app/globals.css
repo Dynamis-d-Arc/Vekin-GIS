@@ -1444,7 +1444,9 @@ tr:last-child td {
 .three-d-map-panel label,
 .three-d-map-panel p,
 #three-d-farm-panel span,
-#three-d-farm-panel p {
+#three-d-farm-panel p,
+#three-d-route-carbon-panel span,
+#three-d-route-carbon-panel p {
   color: rgba(203, 235, 238, 0.68);
   font-size: 12px;
 }
@@ -1573,9 +1575,11 @@ tr:last-child td {
 #three-d-farm-panel,
 #three-d-route-carbon-panel {
   display: grid;
-  gap: 5px;
-  padding: 10px;
+  gap: 10px;
+  padding: 13px;
   border-radius: 8px;
+  position: relative;
+  overflow: hidden;
 }
 
 .three-d-map-side-panels {
@@ -1591,21 +1595,71 @@ tr:last-child td {
 }
 
 #three-d-farm-panel {
-  background: rgba(20, 83, 45, 0.24);
-  border: 1px solid rgba(134, 239, 172, 0.28);
+  background:
+    linear-gradient(135deg, rgba(22, 101, 52, 0.38), rgba(4, 47, 46, 0.52)),
+    rgba(3, 20, 31, 0.62);
+  border: 1px solid rgba(134, 239, 172, 0.34);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(16px);
 }
 
 #three-d-route-carbon-panel {
-  background: rgba(8, 47, 73, 0.4);
-  border: 1px solid rgba(125, 211, 252, 0.24);
+  background:
+    linear-gradient(135deg, rgba(8, 47, 73, 0.66), rgba(20, 83, 45, 0.26)),
+    rgba(3, 20, 31, 0.66);
+  border: 1px solid rgba(125, 211, 252, 0.34);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(16px);
 }
 
 #three-d-farm-panel strong,
 #three-d-route-carbon-panel strong {
   color: #ffffff;
   font-size: 15px;
+}
+
+.three-d-detail-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.three-d-detail-card-heading span {
+  color: #dff7f4;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.three-d-detail-card-heading small {
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  color: rgba(240, 253, 244, 0.78);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+#three-d-route-carbon-panel .three-d-detail-card-metric {
+  color: #ffffff;
+  font-size: 28px;
+  line-height: 1;
+}
+
+#three-d-farm-panel .three-d-detail-card-title {
+  color: #f7fee7;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.three-d-detail-card-lines {
+  display: grid;
+  gap: 6px;
+  padding-top: 2px;
 }
 
 #three-d-farm-panel.hidden,
@@ -1625,6 +1679,20 @@ tr:last-child td {
   color: #e0f2fe;
   font-weight: 800;
   overflow-wrap: anywhere;
+}
+
+#three-d-route-distance,
+#three-d-route-carbon-factor,
+#three-d-farm-summary {
+  padding: 7px 8px;
+  background: rgba(2, 16, 27, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  line-height: 1.35;
+}
+
+#three-d-route-carbon-factor {
+  color: rgba(203, 235, 238, 0.72);
 }
 
 .three-d-map-frame .maplibregl-ctrl-bottom-right {
