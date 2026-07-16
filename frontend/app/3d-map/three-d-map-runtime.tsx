@@ -286,6 +286,33 @@ function farmLabelText(label: string, metrics: FarmMetrics | undefined) {
   return `${label}${cowText}`;
 }
 
+function renderFarmSummary(node: HTMLElement | null, summary: string) {
+  if (!node) return;
+  node.textContent = "";
+  const metricParts = summary
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (!metricParts.length || summary === "No cow metrics entered for this farm.") {
+    node.textContent = summary;
+    node.classList.remove("has-metrics");
+    return;
+  }
+
+  node.classList.add("has-metrics");
+  metricParts.forEach((part) => {
+    const [label, ...valueParts] = part.split(":");
+    const row = document.createElement("span");
+    row.className = "three-d-farm-metric-row";
+    const labelNode = document.createElement("small");
+    labelNode.textContent = label.trim();
+    const valueNode = document.createElement("strong");
+    valueNode.textContent = valueParts.join(":").trim() || part;
+    row.append(labelNode, valueNode);
+    node.appendChild(row);
+  });
+}
+
 function terrainRequestFromUrl(): TerrainRequest {
   const params = new URLSearchParams(window.location.search);
   const west = finiteParam(params, "west");
@@ -1404,7 +1431,7 @@ export function ThreeDMapRuntime() {
         const stopIndex = Number(properties?.stopIndex?.getValue(Cesium.JulianDate.now()));
         farmPanel?.classList.remove("hidden");
         if (farmTitleNode) farmTitleNode.textContent = label;
-        if (farmSummaryNode) farmSummaryNode.textContent = farmSummary;
+        renderFarmSummary(farmSummaryNode, farmSummary);
         if (source === "click" && Number.isInteger(stopIndex)) {
           selectRouteLeg(routeLegIndexForStop(stopIndex));
         }

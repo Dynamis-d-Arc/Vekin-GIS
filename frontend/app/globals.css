@@ -1691,6 +1691,38 @@ tr:last-child td {
   line-height: 1.35;
 }
 
+#three-d-farm-summary.has-metrics {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+}
+
+.three-d-farm-metric-row {
+  display: grid;
+  grid-template-columns: minmax(74px, 0.42fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 5px 7px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+}
+
+.three-d-farm-metric-row small {
+  color: rgba(187, 247, 208, 0.72);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.three-d-farm-metric-row strong {
+  color: #ffffff;
+  font-size: 13px;
+  line-height: 1.15;
+  text-align: right;
+}
+
 #three-d-route-carbon-factor {
   color: rgba(203, 235, 238, 0.72);
 }
