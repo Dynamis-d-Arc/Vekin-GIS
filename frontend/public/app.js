@@ -396,6 +396,9 @@ const supplyChainCount = document.getElementById("supply-chain-count");
 const supplyChainNameInput = document.getElementById("supply-chain-name");
 const saveSupplyChainButton = document.getElementById("save-supply-chain");
 const loadSupplyChainButton = document.getElementById("load-supply-chain");
+const exportSupplyChainButton = document.getElementById("export-supply-chain");
+const importSupplyChainButton = document.getElementById("import-supply-chain");
+const importSupplyChainFileInput = document.getElementById("import-supply-chain-file");
 const savedSupplyChainSelect = document.getElementById("saved-supply-chain-routes");
 const buildingTypeSelect = document.getElementById("building-type");
 const farmDataPanel = document.getElementById("farm-data-panel");
@@ -502,6 +505,15 @@ function routeFromOptionValue(value) {
     source: source || "db",
     id: idParts.join(":"),
   };
+}
+
+function routeFileName(name) {
+  const safeName = String(name || "farm-to-fork-route")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72);
+  return `${safeName || "farm-to-fork-route"}.json`;
 }
 
 function readSavedSupplyChainRoutes() {
@@ -626,6 +638,68 @@ function supplyChainRoutePayload(name) {
       localStorageKey: supplyChainStorageKey,
     },
   };
+}
+
+function portableSupplyChainRoute(route) {
+  const normalized = normalizeSupplyChainRoute(route);
+  if (!normalized || normalized.stops.length < 2) return null;
+  return {
+    schema: "vekin-gis/supply-chain-route",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    route: {
+      name: normalized.name,
+      description: normalized.description || null,
+      metadata: {
+        ...(normalized.metadata || {}),
+        exportedFrom: "vekin-gis",
+      },
+      stops: normalized.stops,
+    },
+  };
+}
+
+function routeFromImportedJson(payload) {
+  const route = payload?.route || payload;
+  return normalizeSupplyChainRoute({
+    ...route,
+    source: "import",
+    name: route?.name || payload?.name || "Imported farm-to-fork route",
+  });
+}
+
+function downloadJsonFile(filename, payload) {
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function selectedSupplyChainRouteForExport() {
+  if (supplyChainStops.length >= 2) {
+    return {
+      id: `route-${Date.now()}`,
+      source: "editor",
+      name: currentRouteName(),
+      updatedAt: new Date().toISOString(),
+      stops: supplyChainStops,
+    };
+  }
+
+  const selection = routeFromOptionValue(savedSupplyChainSelect?.value);
+  if (!selection.id) return null;
+  if (selection.source === "db") {
+    return { ...(await fetchJson(`/api/supply-chain/routes/${selection.id}`)), source: "db" };
+  }
+  return localSupplyChainRoutes()
+    .find((candidate) => candidate.id === selection.id) || null;
 }
 
 async function saveSupplyChainRouteToDatabase(name) {
@@ -799,6 +873,8 @@ function loadSupplyChainRoute(route) {
   setStatus(
     normalized.source === "local"
       ? `Loaded local route ${normalized.name}. Click Save to move it into the database.`
+      : normalized.source === "import"
+        ? `Imported ${normalized.name}. Review it, then click Save to store it.`
       : `Loaded ${normalized.name} from the database.`,
   );
 }
@@ -1089,6 +1165,42 @@ loadSupplyChainButton?.addEventListener("click", async () => {
     loadSupplyChainRoute(route);
   } catch (error) {
     setStatus(`Saved route could not be loaded from the database: ${error.message}`);
+  }
+});
+
+exportSupplyChainButton?.addEventListener("click", async () => {
+  try {
+    const route = await selectedSupplyChainRouteForExport();
+    const payload = portableSupplyChainRoute(route);
+    if (!payload) {
+      setStatus("Load or build a route with at least two stops before exporting.");
+      return;
+    }
+    downloadJsonFile(routeFileName(payload.route.name), payload);
+    setStatus(`Exported ${payload.route.name} as JSON.`);
+  } catch (error) {
+    setStatus(`Route could not be exported: ${error.message}`);
+  }
+});
+
+importSupplyChainButton?.addEventListener("click", () => {
+  importSupplyChainFileInput?.click();
+});
+
+importSupplyChainFileInput?.addEventListener("change", async () => {
+  const file = importSupplyChainFileInput.files?.[0];
+  importSupplyChainFileInput.value = "";
+  if (!file) return;
+  try {
+    const payload = JSON.parse(await file.text());
+    const route = routeFromImportedJson(payload);
+    if (!route || route.stops.length < 2) {
+      setStatus("Imported JSON must contain a route with at least two valid polygon stops.");
+      return;
+    }
+    loadSupplyChainRoute(route);
+  } catch (error) {
+    setStatus(`Route JSON could not be imported: ${error.message}`);
   }
 });
 

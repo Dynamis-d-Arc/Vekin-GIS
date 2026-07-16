@@ -276,6 +276,11 @@ export default function MapPage() {
                   <Button className={secondaryButtonClass} color="alternative" size="sm" id="save-supply-chain" type="button">Save</Button>
                 </div>
                 <Button className={secondaryButtonClass} color="alternative" size="sm" id="load-supply-chain" type="button">Load Saved Route</Button>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="export-supply-chain" type="button">Export JSON</Button>
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="import-supply-chain" type="button">Import JSON</Button>
+                </div>
+                <input id="import-supply-chain-file" type="file" accept="application/json,.json" className="hidden" />
                 <Button
                   className={`${secondaryButtonClass} hidden`}
                   color="alternative"
