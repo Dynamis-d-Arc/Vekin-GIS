@@ -59,6 +59,11 @@ type SupplyChainStop = {
   geometry: FootprintGeometry;
   farmMetrics?: FarmMetrics;
 };
+type SupplyChainRouteLink = {
+  fromStopId: string;
+  toStopId: string;
+  type?: "inbound" | "outbound" | "chain" | "custom";
+};
 type RouteCenter = {
   longitude: number;
   latitude: number;
@@ -117,6 +122,7 @@ type TerrainRequest = {
   footprint: FootprintGeometry | null;
   buildingType: BuildingType;
   route: SupplyChainStop[];
+  routeLinks: SupplyChainRouteLink[];
 };
 let cesiumScriptPromise: Promise<CesiumGlobal> | null = null;
 
@@ -209,6 +215,27 @@ function parseSupplyChainRoute(value: string | null): SupplyChainStop[] {
   }
 }
 
+function parseSupplyChainRouteLinks(value: string | null): SupplyChainRouteLink[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((link) => {
+      if (!link || typeof link !== "object") return [];
+      const candidate = link as { fromStopId?: string; from_stop_id?: string; toStopId?: string; to_stop_id?: string; type?: string };
+      const fromStopId = candidate.fromStopId || candidate.from_stop_id;
+      const toStopId = candidate.toStopId || candidate.to_stop_id;
+      if (!fromStopId || !toStopId || fromStopId === toStopId) return [];
+      const type = candidate.type === "inbound" || candidate.type === "outbound" || candidate.type === "chain" || candidate.type === "custom"
+        ? candidate.type
+        : "custom";
+      return [{ fromStopId, toStopId, type }];
+    });
+  } catch {
+    return [];
+  }
+}
+
 function normalizeFarmMetrics(metrics: FarmMetrics | undefined): FarmMetrics {
   const normalized: FarmMetrics = {};
   const cowCount = Number(metrics?.cowCount);
@@ -257,6 +284,7 @@ function terrainRequestFromUrl(): TerrainRequest {
   const footprint = parseFootprint(params.get("footprint"));
   const buildingType = buildingTypeFromValue(params.get("building_type"));
   const route = parseSupplyChainRoute(params.get("route"));
+  const routeLinks = parseSupplyChainRouteLinks(params.get("route_links"));
 
   if (hasBounds) {
     const width = east! - west!;
@@ -282,6 +310,7 @@ function terrainRequestFromUrl(): TerrainRequest {
       footprint,
       buildingType,
       route,
+      routeLinks,
     };
   }
 
@@ -305,6 +334,7 @@ function terrainRequestFromUrl(): TerrainRequest {
     footprint,
     buildingType,
     route,
+    routeLinks,
   };
 }
 
@@ -459,8 +489,31 @@ function supplyNetworkHubIndex(stops: SupplyChainStop[]) {
   return secondaryHubIndex >= 0 ? secondaryHubIndex : -1;
 }
 
-function routeLegsFromCenters(centers: RouteCenter[], stops: SupplyChainStop[]): RouteLeg[] {
+function routeLegsFromCenters(centers: RouteCenter[], stops: SupplyChainStop[], links: SupplyChainRouteLink[] = []): RouteLeg[] {
   if (centers.length < 2) return [];
+  if (links.length) {
+    const centersByStopId = new Map<string, RouteCenter>();
+    centers.forEach((center) => {
+      if (center.stopId) centersByStopId.set(center.stopId, center);
+      centersByStopId.set(String(center.stopIndex + 1), center);
+    });
+    const explicitLegs = links.flatMap((link, index) => {
+      const from = centersByStopId.get(link.fromStopId);
+      const to = centersByStopId.get(link.toStopId);
+      if (!from || !to || from === to) return [];
+      const direction = link.type === "inbound" || link.type === "outbound" || link.type === "chain"
+        ? link.type
+        : "chain";
+      return [{
+        id: `${from.stopId || from.stopIndex}-${to.stopId || to.stopIndex}-${index + 1}`,
+        from,
+        to,
+        label: `${from.label} to ${to.label}`,
+        direction,
+      }];
+    });
+    if (explicitLegs.length) return explicitLegs;
+  }
   const hubIndex = supplyNetworkHubIndex(stops);
   const hub = hubIndex >= 0 ? centers.find((center) => center.stopIndex === hubIndex) : null;
   if (!hub) {
@@ -1087,7 +1140,7 @@ export function ThreeDMapRuntime() {
           if (labelEntity) buildingLabelEntities.push(labelEntity);
         });
       });
-      const routeLegs = routeLegsFromCenters(routeCenters, routeStops);
+      const routeLegs = routeLegsFromCenters(routeCenters, routeStops, terrainRequest.routeLinks);
       const shipmentPaths = routeLegs.map((leg) => routePositionsFromCenters(Cesium, [leg.from, leg.to]));
       let selectedRouteLegIndex: number | null = null;
       const routeLegIndexForStop = (stopIndex: number, preference: "outbound" | "inbound" | "any" = "any") => {

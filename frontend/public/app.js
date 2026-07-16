@@ -400,6 +400,10 @@ const exportSupplyChainButton = document.getElementById("export-supply-chain");
 const importSupplyChainButton = document.getElementById("import-supply-chain");
 const importSupplyChainFileInput = document.getElementById("import-supply-chain-file");
 const savedSupplyChainSelect = document.getElementById("saved-supply-chain-routes");
+const supplyChainLinksPanel = document.getElementById("supply-chain-links-panel");
+const supplyChainLinkList = document.getElementById("supply-chain-link-list");
+const supplyChainLinkCount = document.getElementById("supply-chain-link-count");
+const autoLinkSupplyChainButton = document.getElementById("auto-link-supply-chain");
 const buildingTypeSelect = document.getElementById("building-type");
 const farmDataPanel = document.getElementById("farm-data-panel");
 const farmNameInput = document.getElementById("farm-name");
@@ -409,6 +413,7 @@ const farmDailyOutputInput = document.getElementById("farm-daily-output");
 const farmCo2eInput = document.getElementById("farm-co2e");
 let latest3dContext = null;
 let supplyChainStops = [];
+let supplyChainLinks = [];
 let savedSupplyChainRouteCache = [];
 let loadingSupplyChainRoutes = false;
 let selectedSupplyChainStopIndex = null;
@@ -558,11 +563,126 @@ function normalizeSupplyChainStop(stop, index = 0) {
   return normalized;
 }
 
+function supplyChainStopLabel(stop, index) {
+  return `${index + 1}. ${stop.name || supplyChainTypeLabel(stop.type)}`;
+}
+
+function routeLinkType(fromStop, toStop) {
+  if (fromStop?.type === "farm" && toStop?.type === "cooperative") return "inbound";
+  if (fromStop?.type === "cooperative" && toStop?.type === "dpo") return "outbound";
+  return "custom";
+}
+
+function stopReferenceCandidates(stop, index) {
+  return [
+    stop?.id,
+    stop?.clientStopId,
+    stop?.client_stop_id,
+    String(index + 1),
+  ].filter(Boolean).map(String);
+}
+
+function stopIndexByReference(stops, reference) {
+  const normalizedReference = String(reference || "");
+  return stops.findIndex((stop, index) => stopReferenceCandidates(stop, index).includes(normalizedReference));
+}
+
+function normalizeSupplyChainLinks(links = [], stops = []) {
+  return links.flatMap((link) => {
+    const fromIndex = stopIndexByReference(stops, link?.fromClientStopId || link?.from_client_stop_id || link?.fromStopId || link?.from_stop_id);
+    const toIndex = stopIndexByReference(stops, link?.toClientStopId || link?.to_client_stop_id || link?.toStopId || link?.to_stop_id);
+    if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return [];
+    const fromStop = stops[fromIndex];
+    const toStop = stops[toIndex];
+    return [{
+      fromStopId: fromStop.id,
+      toStopId: toStop.id,
+      type: link?.type || routeLinkType(fromStop, toStop),
+      metadata: link?.metadata || {},
+    }];
+  });
+}
+
+function nearestStopIndex(sourceStop, candidateIndexes) {
+  const sourceBounds = polygonToBounds(sourceStop?.geometry);
+  if (!sourceBounds || !candidateIndexes.length) return -1;
+  const sourceCenter = L.latLngBounds(sourceBounds).getCenter();
+  let bestIndex = -1;
+  let bestDistance = Infinity;
+  candidateIndexes.forEach((candidateIndex) => {
+    const candidateBounds = polygonToBounds(supplyChainStops[candidateIndex]?.geometry);
+    if (!candidateBounds) return;
+    const distance = sourceCenter.distanceTo(L.latLngBounds(candidateBounds).getCenter());
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = candidateIndex;
+    }
+  });
+  return bestIndex;
+}
+
+function defaultSupplyChainLinks() {
+  const farms = [];
+  const cooperatives = [];
+  const dpos = [];
+  supplyChainStops.forEach((stop, index) => {
+    if (stop.type === "farm") farms.push(index);
+    else if (stop.type === "cooperative") cooperatives.push(index);
+    else if (stop.type === "dpo") dpos.push(index);
+  });
+
+  const links = [];
+  if (cooperatives.length) {
+    farms.forEach((farmIndex) => {
+      const cooperativeIndex = nearestStopIndex(supplyChainStops[farmIndex], cooperatives);
+      if (cooperativeIndex >= 0) {
+        links.push({
+          fromStopId: supplyChainStops[farmIndex].id,
+          toStopId: supplyChainStops[cooperativeIndex].id,
+          type: "inbound",
+          metadata: { autoAssigned: true },
+        });
+      }
+    });
+    cooperatives.forEach((cooperativeIndex) => {
+      const dpoIndex = nearestStopIndex(supplyChainStops[cooperativeIndex], dpos);
+      if (dpoIndex >= 0) {
+        links.push({
+          fromStopId: supplyChainStops[cooperativeIndex].id,
+          toStopId: supplyChainStops[dpoIndex].id,
+          type: "outbound",
+          metadata: { autoAssigned: true },
+        });
+      }
+    });
+  }
+
+  if (!links.length) {
+    supplyChainStops.slice(0, -1).forEach((stop, index) => {
+      links.push({
+        fromStopId: stop.id,
+        toStopId: supplyChainStops[index + 1].id,
+        type: "chain",
+        metadata: { autoAssigned: true },
+      });
+    });
+  }
+  return links;
+}
+
+function ensureSupplyChainLinks() {
+  supplyChainLinks = normalizeSupplyChainLinks(supplyChainLinks, supplyChainStops);
+  if (!supplyChainLinks.length && supplyChainStops.length >= 2) {
+    supplyChainLinks = defaultSupplyChainLinks();
+  }
+}
+
 function normalizeSupplyChainRoute(route) {
   const stops = (route?.stops || [])
     .map((stop, index) => normalizeSupplyChainStop(stop, index))
     .filter(Boolean);
   if (!stops.length) return null;
+  const links = normalizeSupplyChainLinks(route?.links || [], stops);
   return {
     id: route.id || `route-${Date.now()}`,
     source: route.source || "db",
@@ -571,6 +691,7 @@ function normalizeSupplyChainRoute(route) {
     createdAt: route.createdAt || route.created_at,
     metadata: route.metadata || {},
     stops,
+    links,
   };
 }
 
@@ -598,7 +719,7 @@ function renderSavedSupplyChainSelect(routes) {
   routes.forEach((route) => {
     const option = document.createElement("option");
     option.value = routeOptionValue(route);
-    option.textContent = `${route.name} (${route.stops.length} stops${route.source === "local" ? ", local" : ""})`;
+    option.textContent = `${route.name} (${route.stops.length} stops, ${route.links.length} links${route.source === "local" ? ", local" : ""})`;
     savedSupplyChainSelect.appendChild(option);
   });
   if (routes.some((route) => routeOptionValue(route) === selected)) {
@@ -630,9 +751,11 @@ function saveLocalSupplyChainRoute(route) {
 }
 
 function supplyChainRoutePayload(name) {
+  ensureSupplyChainLinks();
   return {
     name,
     stops: supplyChainStops,
+    links: supplyChainLinks,
     metadata: {
       source: "vekin-gis-frontend",
       localStorageKey: supplyChainStorageKey,
@@ -655,6 +778,7 @@ function portableSupplyChainRoute(route) {
         exportedFrom: "vekin-gis",
       },
       stops: normalized.stops,
+      links: normalized.links,
     },
   };
 }
@@ -690,6 +814,7 @@ async function selectedSupplyChainRouteForExport() {
       name: currentRouteName(),
       updatedAt: new Date().toISOString(),
       stops: supplyChainStops,
+      links: supplyChainLinks,
     };
   }
 
@@ -758,6 +883,11 @@ function appendSupplyChainParams(params, stops) {
   params.set("route", JSON.stringify(stops));
 }
 
+function appendSupplyChainLinkParams(params, links) {
+  if (!Array.isArray(links) || !links.length) return;
+  params.set("route_links", JSON.stringify(links));
+}
+
 function build3dTerrainUrl(bounds, options = {}) {
   const params = new URLSearchParams({
     label: options.label || "Processed selected area",
@@ -766,6 +896,7 @@ function build3dTerrainUrl(bounds, options = {}) {
   appendBoundsParams(params, bounds);
   appendFootprintParams(params, options.footprint);
   appendSupplyChainParams(params, options.route);
+  appendSupplyChainLinkParams(params, options.routeLinks);
   if (options.overlayBounds) {
     appendBoundsParams(params, options.overlayBounds, "overlay_");
   }
@@ -792,9 +923,11 @@ function supplyChainBounds(stops) {
 function buildFarmToForkUrl() {
   const bounds = supplyChainBounds(supplyChainStops);
   if (!bounds) return null;
+  ensureSupplyChainLinks();
   return build3dTerrainUrl(bounds, {
     label: supplyChainNameInput?.value.trim() || "Farm to fork route",
     route: supplyChainStops,
+    routeLinks: supplyChainLinks,
     footprint: supplyChainStops[0]?.geometry,
     buildingType: supplyChainStops[0]?.type || "farm",
     startDate: getActiveDateRange().startDate,
@@ -855,7 +988,60 @@ function renderSupplyChainStops() {
       supplyChainList.appendChild(item);
     });
   }
+  ensureSupplyChainLinks();
+  renderSupplyChainLinks();
   updateFarmToForkButton();
+}
+
+function renderSupplyChainLinks() {
+  if (!supplyChainLinksPanel || !supplyChainLinkList) return;
+  const canEditLinks = supplyChainStops.length >= 2;
+  supplyChainLinksPanel.classList.toggle("hidden", !canEditLinks);
+  if (supplyChainLinkCount) {
+    supplyChainLinkCount.textContent = `${supplyChainLinks.length} ${supplyChainLinks.length === 1 ? "link" : "links"}`;
+  }
+  supplyChainLinkList.innerHTML = "";
+  if (!canEditLinks) return;
+
+  supplyChainLinks.forEach((link, index) => {
+    const row = document.createElement("div");
+    row.className = "grid grid-cols-[1fr_1fr_auto] gap-1";
+    const fromSelect = document.createElement("select");
+    fromSelect.className = "rounded border border-cyan-200/20 bg-slate-950/80 px-2 py-1 text-cyan-50";
+    fromSelect.dataset.linkAction = "from";
+    fromSelect.dataset.linkIndex = String(index);
+    const toSelect = document.createElement("select");
+    toSelect.className = fromSelect.className;
+    toSelect.dataset.linkAction = "to";
+    toSelect.dataset.linkIndex = String(index);
+
+    supplyChainStops.forEach((stop, stopIndex) => {
+      const fromOption = document.createElement("option");
+      fromOption.value = stop.id;
+      fromOption.textContent = supplyChainStopLabel(stop, stopIndex);
+      fromSelect.appendChild(fromOption);
+      const toOption = document.createElement("option");
+      toOption.value = stop.id;
+      toOption.textContent = supplyChainStopLabel(stop, stopIndex);
+      toSelect.appendChild(toOption);
+    });
+    fromSelect.value = link.fromStopId;
+    toSelect.value = link.toStopId;
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.dataset.linkAction = "remove";
+    removeButton.dataset.linkIndex = String(index);
+    removeButton.textContent = "Remove";
+    row.append(fromSelect, toSelect, removeButton);
+    supplyChainLinkList.appendChild(row);
+  });
+
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.dataset.linkAction = "add";
+  addButton.textContent = "Add Link";
+  supplyChainLinkList.appendChild(addButton);
 }
 
 function loadSupplyChainRoute(route) {
@@ -865,6 +1051,7 @@ function loadSupplyChainRoute(route) {
     return;
   }
   supplyChainStops = normalized.stops;
+  supplyChainLinks = normalized.links;
   selectedSupplyChainStopIndex = null;
   if (supplyChainNameInput) supplyChainNameInput.value = normalized.name;
   renderSupplyChainStops();
@@ -874,6 +1061,7 @@ function loadSupplyChainRoute(route) {
     show3dTerrainResult(bounds, {
       label: normalized.name,
       route: supplyChainStops,
+      routeLinks: supplyChainLinks,
       footprint: supplyChainStops[0]?.geometry,
       buildingType: supplyChainStops[0]?.type || "farm",
       startDate: getActiveDateRange().startDate,
@@ -900,6 +1088,7 @@ function show3dTerrainResult(bounds, options = {}) {
     footprint: options.footprint || getSelectedGeometry(),
     buildingType: options.buildingType || selectedBuildingType(),
     route: options.route || supplyChainStops,
+    routeLinks: options.routeLinks || supplyChainLinks,
   });
   view3dTerrainButton.classList.remove("hidden");
 }
@@ -1062,9 +1251,54 @@ addSupplyChainStopButton?.addEventListener("click", () => {
 
 clearSupplyChainButton?.addEventListener("click", () => {
   supplyChainStops = [];
+  supplyChainLinks = [];
   selectedSupplyChainStopIndex = null;
   renderSupplyChainStops();
   setStatus("Farm-to-fork route cleared.");
+});
+
+autoLinkSupplyChainButton?.addEventListener("click", () => {
+  supplyChainLinks = defaultSupplyChainLinks();
+  renderSupplyChainStops();
+  setStatus("Route links were auto-assigned from farms to cooperatives to DPOs.");
+});
+
+supplyChainLinkList?.addEventListener("change", (event) => {
+  const field = event.target.closest("[data-link-action]");
+  if (!field) return;
+  const index = Number(field.dataset.linkIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= supplyChainLinks.length) return;
+  const action = field.dataset.linkAction;
+  const nextLink = { ...supplyChainLinks[index] };
+  if (action === "from") nextLink.fromStopId = field.value;
+  if (action === "to") nextLink.toStopId = field.value;
+  const fromStop = supplyChainStops.find((stop) => stop.id === nextLink.fromStopId);
+  const toStop = supplyChainStops.find((stop) => stop.id === nextLink.toStopId);
+  nextLink.type = routeLinkType(fromStop, toStop);
+  supplyChainLinks[index] = nextLink;
+  supplyChainLinks = normalizeSupplyChainLinks(supplyChainLinks, supplyChainStops);
+  renderSupplyChainStops();
+});
+
+supplyChainLinkList?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-link-action]");
+  if (!button) return;
+  const action = button.dataset.linkAction;
+  const index = Number(button.dataset.linkIndex);
+  if (action === "add" && supplyChainStops.length >= 2) {
+    const fromStop = supplyChainStops[0];
+    const toStop = supplyChainStops[1];
+    supplyChainLinks.push({
+      fromStopId: fromStop.id,
+      toStopId: toStop.id,
+      type: routeLinkType(fromStop, toStop),
+      metadata: {},
+    });
+    renderSupplyChainStops();
+  } else if (action === "remove" && Number.isInteger(index) && index >= 0 && index < supplyChainLinks.length) {
+    supplyChainLinks.splice(index, 1);
+    renderSupplyChainStops();
+  }
 });
 
 supplyChainList?.addEventListener("click", (event) => {
@@ -1100,7 +1334,11 @@ supplyChainList?.addEventListener("click", (event) => {
     updateFarmToForkButton();
     setStatus(`Replaced plot boundary for ${supplyChainStops[index].name}. Click Save to update the database route.`);
   } else if (action === "remove") {
+    const removedStop = supplyChainStops[index];
     supplyChainStops.splice(index, 1);
+    supplyChainLinks = supplyChainLinks.filter((link) => (
+      link.fromStopId !== removedStop.id && link.toStopId !== removedStop.id
+    ));
     if (selectedSupplyChainStopIndex === index) selectedSupplyChainStopIndex = null;
     if (selectedSupplyChainStopIndex !== null && selectedSupplyChainStopIndex > index) {
       selectedSupplyChainStopIndex -= 1;
@@ -1150,6 +1388,7 @@ saveSupplyChainButton?.addEventListener("click", async () => {
       name,
       updatedAt: new Date().toISOString(),
       stops: supplyChainStops,
+      links: supplyChainLinks,
     };
     saveLocalSupplyChainRoute(localRoute);
     if (supplyChainNameInput) supplyChainNameInput.value = name;

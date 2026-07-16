@@ -126,6 +126,14 @@ export default function ThreeDWorkflowPage() {
                 placeholder="Route name"
               />
               <ol id="supply-chain-list" className="grid gap-1 text-cyan-50" />
+              <div id="supply-chain-links-panel" className="hidden grid gap-2 rounded-md border border-lime-300/20 bg-lime-300/10 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Route links</span>
+                  <strong id="supply-chain-link-count" className="text-lime-200">0 links</strong>
+                </div>
+                <div id="supply-chain-link-list" className="grid gap-1" />
+                <Button className={secondaryButtonClass} color="alternative" size="sm" id="auto-link-supply-chain" type="button">Auto Link</Button>
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <Button className={secondaryButtonClass} color="alternative" size="sm" id="add-supply-chain-stop" type="button">Add Stop</Button>
                 <Button className={secondaryButtonClass} color="alternative" size="sm" id="clear-supply-chain" type="button">Clear Route</Button>
