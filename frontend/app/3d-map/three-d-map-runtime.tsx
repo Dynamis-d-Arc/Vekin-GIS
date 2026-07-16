@@ -483,7 +483,9 @@ function routeLegSpanLabel(leg: RouteLeg) {
 }
 
 function routeLegColor(Cesium: CesiumGlobal, leg: RouteLeg) {
-  const isCooperativeToDpo = leg.from.stopType === "cooperative" && leg.to.stopType === "dpo";
+  const cooperativeTypes: BuildingType[] = ["cooperative", "processor"];
+  const dpoTypes: BuildingType[] = ["dpo", "retailer", "end-product"];
+  const isCooperativeToDpo = cooperativeTypes.includes(leg.from.stopType) && dpoTypes.includes(leg.to.stopType);
   if (isCooperativeToDpo) return Cesium.Color.fromCssColorString("#06b6d4");
   if (leg.direction === "inbound") return Cesium.Color.RED;
   if (leg.direction === "outbound") return Cesium.Color.ROYALBLUE;

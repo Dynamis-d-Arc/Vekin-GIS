@@ -676,9 +676,21 @@ function defaultSupplyChainLinks() {
 
 function ensureSupplyChainLinks() {
   supplyChainLinks = normalizeSupplyChainLinks(supplyChainLinks, supplyChainStops);
-  if (!supplyChainLinks.length && supplyChainStops.length >= 2) {
-    supplyChainLinks = defaultSupplyChainLinks();
-  }
+  if (supplyChainStops.length < 2) return;
+  const defaults = defaultSupplyChainLinks();
+  defaults.forEach((defaultLink) => {
+    const matchingLink = supplyChainLinks.some((link) => (
+      link.fromStopId === defaultLink.fromStopId
+      && link.toStopId === defaultLink.toStopId
+    ));
+    const sameStageLink = supplyChainLinks.some((link) => (
+      link.fromStopId === defaultLink.fromStopId
+      && link.type === defaultLink.type
+    ));
+    if (!matchingLink && !sameStageLink) {
+      supplyChainLinks.push(defaultLink);
+    }
+  });
 }
 
 function normalizeSupplyChainRoute(route) {
