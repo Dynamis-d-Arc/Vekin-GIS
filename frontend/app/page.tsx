@@ -215,18 +215,21 @@ export default function MapPage() {
                   <option value="dpo">DPO</option>
                 </select>
               </div>
-              <div id="farm-data-panel" className="grid gap-2 rounded-md border border-emerald-300/25 bg-emerald-400/10 p-2.5 text-xs text-cyan-100/70">
-                <div className="flex items-center justify-between gap-2">
-                  <span>Farm data</span>
-                  <strong className="text-lime-200">Cow metrics</strong>
-                </div>
+              <div className={labelClass}>
+                <Label htmlFor="farm-name">Stop name</Label>
                 <TextInput
                   className={inputClass}
                   sizing="sm"
                   id="farm-name"
                   type="text"
-                  placeholder="Farm name"
+                  placeholder="Farm, cooperative, or DPO name"
                 />
+              </div>
+              <div id="farm-data-panel" className="grid gap-2 rounded-md border border-emerald-300/25 bg-emerald-400/10 p-2.5 text-xs text-cyan-100/70">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Farm data</span>
+                  <strong className="text-lime-200">Cow metrics</strong>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div className={labelClass}>
                     <Label htmlFor="farm-cow-count">Cows</Label>

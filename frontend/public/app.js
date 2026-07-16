@@ -479,7 +479,11 @@ function farmMetricsSummary(metrics) {
 
 function updateFarmDataPanel() {
   if (!farmDataPanel) return;
-  farmDataPanel.classList.toggle("hidden", selectedBuildingType() !== "farm");
+  const type = selectedBuildingType();
+  farmDataPanel.classList.toggle("hidden", type !== "farm");
+  if (farmNameInput) {
+    farmNameInput.placeholder = `${supplyChainTypeLabel(type)} name`;
+  }
 }
 
 function supplyChainTypeLabel(type) {
@@ -1219,6 +1223,7 @@ view3dGridButton?.addEventListener("click", () => {
 });
 
 buildingTypeSelect?.addEventListener("change", updateFarmDataPanel);
+updateFarmDataPanel();
 
 addSupplyChainStopButton?.addEventListener("click", () => {
   if (polygonDrawMode) {
@@ -1236,12 +1241,12 @@ addSupplyChainStopButton?.addEventListener("click", () => {
     return;
   }
   const type = selectedBuildingType();
-  const farmName = farmNameInput?.value.trim();
+  const stopName = farmNameInput?.value.trim();
   const farmMetrics = type === "farm" ? currentFarmMetrics() : null;
   supplyChainStops.push({
     id: `stop-${Date.now()}-${supplyChainStops.length + 1}`,
     type,
-    name: type === "farm" && farmName ? farmName : supplyChainTypeLabel(type),
+    name: stopName || supplyChainTypeLabel(type),
     geometry,
     ...(farmMetrics ? { farmMetrics } : {}),
   });
