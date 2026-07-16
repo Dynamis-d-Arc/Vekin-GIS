@@ -101,6 +101,7 @@ const AVERAGE_TRUCK_CO2E_KG_PER_KM = 0.9;
 const COW_MODEL_URI = "/models/GLB_Cow.glb";
 const COWS_PER_MODEL = 5;
 const MAX_COW_MODELS_PER_FARM = 200;
+const THREE_D_ROUTE_PAYLOAD_STORAGE_PREFIX = "vekin-3d-route-payload";
 
 type TerrainRequest = {
   west: number;
@@ -236,6 +237,26 @@ function parseSupplyChainRouteLinks(value: string | null): SupplyChainRouteLink[
   }
 }
 
+function routePayloadFromStorage(key: string | null): {
+  footprint?: FootprintGeometry | null;
+  route?: SupplyChainStop[];
+  routeLinks?: SupplyChainRouteLink[];
+} {
+  if (!key || !key.startsWith(`${THREE_D_ROUTE_PAYLOAD_STORAGE_PREFIX}:`)) return {};
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (!stored) return {};
+    const parsed = JSON.parse(stored) as { footprint?: unknown; route?: unknown; routeLinks?: unknown };
+    return {
+      footprint: parseFootprint(parsed.footprint ? JSON.stringify(parsed.footprint) : null),
+      route: parseSupplyChainRoute(parsed.route ? JSON.stringify(parsed.route) : null),
+      routeLinks: parseSupplyChainRouteLinks(parsed.routeLinks ? JSON.stringify(parsed.routeLinks) : null),
+    };
+  } catch {
+    return {};
+  }
+}
+
 function normalizeFarmMetrics(metrics: FarmMetrics | undefined): FarmMetrics {
   const normalized: FarmMetrics = {};
   const cowCount = Number(metrics?.cowCount);
@@ -281,10 +302,11 @@ function terrainRequestFromUrl(): TerrainRequest {
   const hasOverlayBounds = [overlayWest, overlaySouth, overlayEast, overlayNorth].every((value) => value !== null)
     && overlayWest! < overlayEast!
     && overlaySouth! < overlayNorth!;
-  const footprint = parseFootprint(params.get("footprint"));
+  const storedRoutePayload = routePayloadFromStorage(params.get("route_key"));
+  const footprint = storedRoutePayload.footprint ?? parseFootprint(params.get("footprint"));
   const buildingType = buildingTypeFromValue(params.get("building_type"));
-  const route = parseSupplyChainRoute(params.get("route"));
-  const routeLinks = parseSupplyChainRouteLinks(params.get("route_links"));
+  const route = storedRoutePayload.route ?? parseSupplyChainRoute(params.get("route"));
+  const routeLinks = storedRoutePayload.routeLinks ?? parseSupplyChainRouteLinks(params.get("route_links"));
 
   if (hasBounds) {
     const width = east! - west!;

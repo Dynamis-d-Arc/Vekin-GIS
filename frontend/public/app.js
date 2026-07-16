@@ -418,6 +418,7 @@ let savedSupplyChainRouteCache = [];
 let loadingSupplyChainRoutes = false;
 let selectedSupplyChainStopIndex = null;
 const supplyChainStorageKey = "vekin-supply-chain-routes";
+const threeDRoutePayloadStoragePrefix = "vekin-3d-route-payload";
 const supplyChainBoundsPaddingRatio = 0.45;
 
 function setStatus(message) {
@@ -905,15 +906,44 @@ function appendSupplyChainLinkParams(params, links) {
   params.set("route_links", JSON.stringify(links));
 }
 
+function stableStringHash(value) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(index);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function store3dRoutePayload(payload) {
+  if (!payload?.route?.length) return null;
+  try {
+    const serialized = JSON.stringify(payload);
+    const key = `${threeDRoutePayloadStoragePrefix}:${stableStringHash(serialized)}`;
+    window.localStorage.setItem(key, serialized);
+    return key;
+  } catch {
+    return null;
+  }
+}
+
 function build3dTerrainUrl(bounds, options = {}) {
   const params = new URLSearchParams({
     label: options.label || "Processed selected area",
     building_type: options.buildingType || selectedBuildingType(),
   });
   appendBoundsParams(params, bounds);
-  appendFootprintParams(params, options.footprint);
-  appendSupplyChainParams(params, options.route);
-  appendSupplyChainLinkParams(params, options.routeLinks);
+  const payloadKey = store3dRoutePayload({
+    footprint: options.footprint,
+    route: options.route,
+    routeLinks: options.routeLinks,
+  });
+  if (payloadKey) {
+    params.set("route_key", payloadKey);
+  } else {
+    appendFootprintParams(params, options.footprint);
+    appendSupplyChainParams(params, options.route);
+    appendSupplyChainLinkParams(params, options.routeLinks);
+  }
   if (options.overlayBounds) {
     appendBoundsParams(params, options.overlayBounds, "overlay_");
   }
