@@ -1077,6 +1077,7 @@ export function ThreeDMapRuntime() {
               buildingType: stop.type,
               buildingHeight: style.height,
               routeIndex: stopIndex + 1,
+              stopIndex,
               label,
               farmSummary,
               longitude: centroid.longitude,
@@ -1089,9 +1090,24 @@ export function ThreeDMapRuntime() {
       const routeLegs = routeLegsFromCenters(routeCenters, routeStops);
       const shipmentPaths = routeLegs.map((leg) => routePositionsFromCenters(Cesium, [leg.from, leg.to]));
       let selectedRouteLegIndex: number | null = null;
-      const routeLegIndexForStop = (stopIndex: number) => {
+      const routeLegIndexForStop = (stopIndex: number, preference: "outbound" | "inbound" | "any" = "any") => {
+        const preferredIndex = routeLegs.findIndex((leg) => {
+          if (preference === "outbound") return leg.from.stopIndex === stopIndex;
+          if (preference === "inbound") return leg.to.stopIndex === stopIndex;
+          return false;
+        });
+        if (preferredIndex >= 0) return preferredIndex;
         const directIndex = routeLegs.findIndex((leg) => leg.from.stopIndex === stopIndex || leg.to.stopIndex === stopIndex);
         return directIndex >= 0 ? directIndex : null;
+      };
+      const routeLegIndexForBuilding = (buildingType: BuildingType, stopIndex: number) => {
+        if (buildingType === "cooperative" || buildingType === "processor") {
+          return routeLegIndexForStop(stopIndex, "outbound");
+        }
+        if (buildingType === "dpo" || buildingType === "retailer" || buildingType === "end-product") {
+          return routeLegIndexForStop(stopIndex, "inbound");
+        }
+        return routeLegIndexForStop(stopIndex);
       };
       const updateRouteCarbonPanel = () => {
         if (!routeCarbonPanel || !routeCarbonNode || !routeSpanNode || !routeDistanceNode || !routeCarbonFactorNode) return;
@@ -1256,9 +1272,9 @@ export function ThreeDMapRuntime() {
           position: Cesium.Cartesian3.fromDegrees(cow.longitude, cow.latitude, 0),
           model: {
             uri: COW_MODEL_URI,
-            scale: 0.018,
-            minimumPixelSize: 26,
-            maximumScale: 80,
+            scale: 0.035,
+            minimumPixelSize: 52,
+            maximumScale: 240,
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
           },
           label: {
@@ -1284,6 +1300,17 @@ export function ThreeDMapRuntime() {
       });
 
       const pickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+      const routeBuildingDetails = (entity: import("cesium").Entity | undefined) => {
+        const properties = entity?.properties;
+        const buildingType = buildingTypeFromValue(properties?.buildingType?.getValue(Cesium.JulianDate.now()) || null);
+        const stopIndex = Number(properties?.stopIndex?.getValue(Cesium.JulianDate.now()));
+        if (!Number.isInteger(stopIndex)) return null;
+        return {
+          buildingType,
+          stopIndex,
+          label: properties?.label?.getValue(Cesium.JulianDate.now()) || entity?.name || buildingTypeLabel(buildingType),
+        };
+      };
       const showFarmMetrics = (entity: import("cesium").Entity, source: "hover" | "click") => {
         const properties = entity?.properties;
         const buildingType = properties?.buildingType?.getValue(Cesium.JulianDate.now());
@@ -1300,7 +1327,7 @@ export function ThreeDMapRuntime() {
         setStatus(`${source === "hover" ? "Farm hover" : "Farm selected"} - ${label}: ${farmSummary}`);
         return true;
       };
-      const farmEntityFromPosition = (position: import("cesium").Cartesian2 | undefined) => {
+      const routeBuildingEntityFromPosition = (position: import("cesium").Cartesian2 | undefined) => {
         if (!position) return null;
         const pickedItems = [
           viewer?.scene.pick(position),
@@ -1308,8 +1335,10 @@ export function ThreeDMapRuntime() {
         ];
         for (const picked of pickedItems) {
           const entity = (picked?.id || picked?.primitive?.id) as import("cesium").Entity | undefined;
-          const buildingType = entity?.properties?.buildingType?.getValue(Cesium.JulianDate.now());
-          if (buildingType === "farm") return entity;
+          const type = entity?.properties?.type?.getValue(Cesium.JulianDate.now());
+          if ((type === "building" || type === "building-border" || type === "building-label") && routeBuildingDetails(entity)) {
+            return entity;
+          }
         }
         return null;
       };
@@ -1336,14 +1365,28 @@ export function ThreeDMapRuntime() {
           setStatus(`Selected route leg - ${routeLegs[routeLegIndex]!.label}`);
           return;
         }
-        const entity = farmEntityFromPosition(movement.position);
-        if (entity) showFarmMetrics(entity, "click");
+        const entity = routeBuildingEntityFromPosition(movement.position);
+        if (entity) {
+          const details = routeBuildingDetails(entity);
+          const selectedLegIndex = details ? routeLegIndexForBuilding(details.buildingType, details.stopIndex) : null;
+          if (details && details.buildingType !== "farm") {
+            selectRouteLeg(selectedLegIndex);
+            setStatus(
+              selectedLegIndex !== null
+                ? `Selected route leg - ${routeLegs[selectedLegIndex]!.label}`
+                : `${buildingTypeLabel(details.buildingType)} selected - no connected route leg found.`,
+            );
+            return;
+          }
+          showFarmMetrics(entity, "click");
+          return;
+        }
         if (!entity) {
           selectRouteLeg(null);
         }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
       pickHandler.setInputAction((movement: { endPosition?: import("cesium").Cartesian2 }) => {
-        const entity = farmEntityFromPosition(movement.endPosition);
+        const entity = routeBuildingEntityFromPosition(movement.endPosition);
         const routeLegIndex = routeLegIndexFromPosition(movement.endPosition);
         viewer!.scene.canvas.style.cursor = entity || routeLegIndex !== null ? "pointer" : "";
         if (entity) showFarmMetrics(entity, "hover");
