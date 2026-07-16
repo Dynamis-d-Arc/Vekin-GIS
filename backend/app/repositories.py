@@ -497,6 +497,43 @@ def ensure_supply_chain_route_tables() -> None:
               USING gist (geometry)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS supply_chain_route_links (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              route_id uuid NOT NULL REFERENCES supply_chain_routes(id) ON DELETE CASCADE,
+              from_stop_id uuid NOT NULL REFERENCES supply_chain_route_stops(id) ON DELETE CASCADE,
+              to_stop_id uuid NOT NULL REFERENCES supply_chain_route_stops(id) ON DELETE CASCADE,
+              link_order integer NOT NULL,
+              link_type text NOT NULL DEFAULT 'custom' CHECK (
+                link_type IN ('inbound', 'outbound', 'chain', 'custom')
+              ),
+              metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              updated_at timestamptz NOT NULL DEFAULT now(),
+              CHECK (from_stop_id <> to_stop_id),
+              UNIQUE (route_id, link_order)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_supply_chain_route_links_route_order
+              ON supply_chain_route_links (route_id, link_order)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_supply_chain_route_links_from_stop
+              ON supply_chain_route_links (from_stop_id)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_supply_chain_route_links_to_stop
+              ON supply_chain_route_links (to_stop_id)
+            """
+        )
         conn.commit()
 
 
@@ -514,6 +551,31 @@ def _supply_chain_stop_rows(conn, route_id: str) -> list[dict[str, Any]]:
         FROM supply_chain_route_stops
         WHERE route_id = %s
         ORDER BY stop_order
+        """,
+        (route_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _supply_chain_link_rows(conn, route_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+          links.id::text,
+          links.from_stop_id::text,
+          links.to_stop_id::text,
+          from_stop.client_stop_id AS from_client_stop_id,
+          to_stop.client_stop_id AS to_client_stop_id,
+          links.link_type AS type,
+          links.metadata,
+          links.link_order
+        FROM supply_chain_route_links links
+        JOIN supply_chain_route_stops from_stop
+          ON from_stop.id = links.from_stop_id
+        JOIN supply_chain_route_stops to_stop
+          ON to_stop.id = links.to_stop_id
+        WHERE links.route_id = %s
+        ORDER BY links.link_order
         """,
         (route_id,),
     ).fetchall()
@@ -539,14 +601,16 @@ def _supply_chain_route_row(conn, route_id: str) -> dict[str, Any] | None:
         return None
     route = dict(row)
     route["stops"] = _supply_chain_stop_rows(conn, route["id"])
+    route["links"] = _supply_chain_link_rows(conn, route["id"])
     return route
 
 
-def _insert_supply_chain_stops(conn, *, route_id: str, stops: list[dict[str, Any]]) -> None:
+def _insert_supply_chain_stops(conn, *, route_id: str, stops: list[dict[str, Any]]) -> dict[str, str]:
+    stop_ids_by_reference: dict[str, str] = {}
     for index, stop in enumerate(stops, start=1):
         farm_metrics = stop.get("farmMetrics") or stop.get("farm_metrics") or {}
         stop_type = _canonical_supply_chain_stop_type(stop["type"])
-        conn.execute(
+        row = conn.execute(
             """
             INSERT INTO supply_chain_route_stops (
               route_id,
@@ -566,6 +630,7 @@ def _insert_supply_chain_stops(conn, *, route_id: str, stops: list[dict[str, Any
               ST_SetSRID(ST_GeomFromGeoJSON(%(geometry)s), 4326),
               %(farm_metrics)s
             )
+            RETURNING id::text
             """,
             {
                 "route_id": route_id,
@@ -575,6 +640,57 @@ def _insert_supply_chain_stops(conn, *, route_id: str, stops: list[dict[str, Any
                 "name": stop.get("name"),
                 "geometry": Json(stop["geometry"]),
                 "farm_metrics": Json(farm_metrics),
+            },
+        ).fetchone()
+        stop_id = row["id"]
+        stop_ids_by_reference[stop_id] = stop_id
+        stop_ids_by_reference[str(index)] = stop_id
+        client_stop_id = stop.get("id") or stop.get("clientStopId")
+        if client_stop_id:
+            stop_ids_by_reference[client_stop_id] = stop_id
+    return stop_ids_by_reference
+
+
+def _insert_supply_chain_links(
+    conn,
+    *,
+    route_id: str,
+    links: list[dict[str, Any]],
+    stop_ids_by_reference: dict[str, str],
+) -> None:
+    for index, link in enumerate(links, start=1):
+        from_reference = link.get("fromStopId") or link.get("from_stop_id")
+        to_reference = link.get("toStopId") or link.get("to_stop_id")
+        from_stop_id = stop_ids_by_reference.get(str(from_reference))
+        to_stop_id = stop_ids_by_reference.get(str(to_reference))
+        if not from_stop_id or not to_stop_id:
+            raise ValueError("Route links must reference stops by stop id, client stop id, or stop order.")
+        conn.execute(
+            """
+            INSERT INTO supply_chain_route_links (
+              route_id,
+              from_stop_id,
+              to_stop_id,
+              link_order,
+              link_type,
+              metadata
+            )
+            VALUES (
+              %(route_id)s,
+              %(from_stop_id)s,
+              %(to_stop_id)s,
+              %(link_order)s,
+              %(link_type)s,
+              %(metadata)s
+            )
+            """,
+            {
+                "route_id": route_id,
+                "from_stop_id": from_stop_id,
+                "to_stop_id": to_stop_id,
+                "link_order": index,
+                "link_type": link.get("type") or "custom",
+                "metadata": Json(link.get("metadata") or {}),
             },
         )
 
@@ -604,6 +720,7 @@ def list_supply_chain_routes(limit: int = 50) -> list[dict[str, Any]]:
         for row in rows:
             route = dict(row)
             route["stops"] = _supply_chain_stop_rows(conn, route["id"])
+            route["links"] = _supply_chain_link_rows(conn, route["id"])
             routes.append(route)
         return routes
 
@@ -628,7 +745,13 @@ def create_supply_chain_route(route: dict[str, Any]) -> dict[str, Any]:
             },
         ).fetchone()
         route_id = row["id"]
-        _insert_supply_chain_stops(conn, route_id=route_id, stops=route["stops"])
+        stop_ids_by_reference = _insert_supply_chain_stops(conn, route_id=route_id, stops=route["stops"])
+        _insert_supply_chain_links(
+            conn,
+            route_id=route_id,
+            links=route.get("links") or [],
+            stop_ids_by_reference=stop_ids_by_reference,
+        )
         saved = _supply_chain_route_row(conn, route_id)
         conn.commit()
         return saved
@@ -657,8 +780,15 @@ def update_supply_chain_route(route_id: str, route: dict[str, Any]) -> dict[str,
         if not row:
             conn.rollback()
             return None
+        conn.execute("DELETE FROM supply_chain_route_links WHERE route_id = %s", (route_id,))
         conn.execute("DELETE FROM supply_chain_route_stops WHERE route_id = %s", (route_id,))
-        _insert_supply_chain_stops(conn, route_id=route_id, stops=route["stops"])
+        stop_ids_by_reference = _insert_supply_chain_stops(conn, route_id=route_id, stops=route["stops"])
+        _insert_supply_chain_links(
+            conn,
+            route_id=route_id,
+            links=route.get("links") or [],
+            stop_ids_by_reference=stop_ids_by_reference,
+        )
         saved = _supply_chain_route_row(conn, route_id)
         conn.commit()
         return saved

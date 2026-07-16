@@ -112,12 +112,22 @@ class SupplyChainStopBase(BaseModel):
     farm_metrics: SupplyChainFarmMetrics | None = Field(default=None, alias="farmMetrics")
 
 
+class SupplyChainRouteLinkBase(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_stop_id: str = Field(..., min_length=1, alias="fromStopId")
+    to_stop_id: str = Field(..., min_length=1, alias="toStopId")
+    type: Literal["inbound", "outbound", "chain", "custom"] = "custom"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class SupplyChainRouteCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(..., min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=1000)
     stops: list[SupplyChainStopBase] = Field(default_factory=list, min_length=2)
+    links: list[SupplyChainRouteLinkBase] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -127,6 +137,7 @@ class SupplyChainRouteUpdate(BaseModel):
     name: str = Field(..., min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=1000)
     stops: list[SupplyChainStopBase] = Field(default_factory=list, min_length=2)
+    links: list[SupplyChainRouteLinkBase] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -142,6 +153,19 @@ class SupplyChainStopResponse(BaseModel):
     stop_order: int = Field(alias="stopOrder")
 
 
+class SupplyChainRouteLinkResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    from_stop_id: str = Field(alias="fromStopId")
+    to_stop_id: str = Field(alias="toStopId")
+    from_client_stop_id: str | None = Field(default=None, alias="fromClientStopId")
+    to_client_stop_id: str | None = Field(default=None, alias="toClientStopId")
+    type: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    link_order: int = Field(alias="linkOrder")
+
+
 class SupplyChainRouteResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -150,5 +174,6 @@ class SupplyChainRouteResponse(BaseModel):
     description: str | None
     metadata: dict[str, Any]
     stops: list[SupplyChainStopResponse]
+    links: list[SupplyChainRouteLinkResponse] = Field(default_factory=list)
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
