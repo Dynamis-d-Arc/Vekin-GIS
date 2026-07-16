@@ -9,10 +9,18 @@ from shapely.geometry import box, mapping, shape
 from app.config import get_settings
 
 
-def _sentinel_item_payload(item: Any, area_geojson: dict[str, Any]) -> dict[str, Any]:
+def _bbox_polygon_geojson(item_bbox: list[float], area_geojson: dict[str, Any]) -> dict[str, Any]:
+    item_bounds = box(*item_bbox)
     area = shape(area_geojson)
+    overlap = item_bounds.intersection(area.envelope)
+    if overlap.geom_type == "Polygon" and overlap.area > 0:
+        return mapping(overlap)
+    return mapping(item_bounds)
+
+
+def _sentinel_item_payload(item: Any, area_geojson: dict[str, Any]) -> dict[str, Any]:
     signed = planetary_computer.sign(item)
-    bbox_geojson = mapping(box(*signed.bbox).intersection(area.envelope))
+    bbox_geojson = _bbox_polygon_geojson(signed.bbox, area_geojson)
     red_asset = signed.assets.get("B04")
     nir_asset = signed.assets.get("B08")
     ndbi_nir_asset = signed.assets.get("B8A")

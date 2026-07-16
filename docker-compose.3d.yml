@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: vekin-gis-3d-postgis
+    environment:
+      POSTGRES_USER: vekin
+      POSTGRES_PASSWORD: vekin
+      POSTGRES_DB: vekin_gis
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgis-3d-data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vekin -d vekin_gis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: vekin-gis-3d-api
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://vekin:vekin@db:5432/vekin_gis
+      API_PUBLIC_BASE_URL: http://localhost:8001
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./tmp:/app/tmp
+      - ./HydroRIVERS_v10:/app/HydroRIVERS_v10:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgis-3d-data:

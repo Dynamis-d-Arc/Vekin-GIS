@@ -90,16 +90,28 @@ export default function MapPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Button
-                  id="toggle-process-form"
+                  id="show-2d-gis-form"
                   type="button"
                   aria-controls="process-form"
-                  aria-expanded="true"
+                  aria-pressed="true"
                   className={mapControlButtonClass}
                   color="alternative"
                   size="xs"
                 >
-                  <span className={mapControlIconClass} aria-hidden="true">-</span>
-                  <span>Hide form</span>
+                  <span className={mapControlIconClass} aria-hidden="true">2D</span>
+                  <span>2D GIS</span>
+                </Button>
+                <Button
+                  id="show-3d-ftf-form"
+                  type="button"
+                  aria-controls="three-d-route-form"
+                  aria-pressed="false"
+                  className={mapControlButtonClass}
+                  color="alternative"
+                  size="xs"
+                >
+                  <span className={mapControlIconClass} aria-hidden="true">3D</span>
+                  <span>3D FTF</span>
                 </Button>
                 <Button
                   id="toggle-map-fullscreen"
@@ -117,14 +129,15 @@ export default function MapPage() {
             </div>
 
             <div className="map-stage">
+              <div id="map-control-stack" className="map-control-stack absolute left-3 top-3 z-[430] grid max-h-[calc(100%-24px)] w-[min(360px,calc(100%-24px))] gap-2 overflow-y-auto text-cyan-50">
               <form
                 id="process-form"
-                aria-label="Map processing controls"
-                className="process-form-panel absolute left-3 top-3 z-[430] grid max-h-[calc(100%-24px)] w-[min(340px,calc(100%-24px))] gap-2 overflow-y-auto rounded-xl border border-cyan-200/20 p-3.5 text-cyan-50"
+                aria-label="2D map processing controls"
+                className="process-form-panel grid gap-2 rounded-xl border border-cyan-200/20 p-3.5"
               >
               <header className="process-form-header">
                 <div>
-                  <span>Analysis workspace</span>
+                  <span>2D analysis</span>
                   <strong>Process satellite grid</strong>
                 </div>
                 <Button className="fb-button" color="alternative" size="xs" id="close-process-form" type="button" aria-label="Close processing form">×</Button>
@@ -137,6 +150,7 @@ export default function MapPage() {
                 <Button className={secondaryButtonClass} color="alternative" size="sm" id="search-button" type="button">Search</Button>
                 <Button className={secondaryButtonClass} color="alternative" size="sm" id="draw-box-button" type="button">Draw Box</Button>
               </div>
+              <Button className={secondaryButtonClass} color="alternative" size="sm" id="draw-polygon-button" type="button">Draw Polygon</Button>
               <div className={`${labelClass} process-field-full`}>
                 <Label htmlFor="bounds-input">Paste bounds</Label>
                 <TextInput
@@ -172,6 +186,114 @@ export default function MapPage() {
               </p>
               </form>
 
+              <section
+                id="three-d-route-form"
+                aria-label="3D farm route controls"
+                className="process-form-panel grid gap-2 rounded-xl border border-emerald-300/20 p-3.5"
+              >
+              <header className="process-form-header">
+                <div>
+                  <span>3D route</span>
+                  <strong>Farm route &amp; cows</strong>
+                </div>
+                <Button
+                  className={`${secondaryButtonClass} hidden`}
+                  color="alternative"
+                  id="view-3d-terrain"
+                  size="xs"
+                  type="button"
+                >
+                  View 3D terrain
+                </Button>
+              </header>
+              <Button className={secondaryButtonClass} color="alternative" size="sm" id="draw-3d-polygon-button" type="button">Draw Polygon</Button>
+              <div className={`${labelClass} process-field-full`}>
+                <Label htmlFor="building-type">Building label</Label>
+                <select id="building-type" className={inputClass} defaultValue="farm">
+                  <option value="farm">Farm</option>
+                  <option value="cooperative">Cooperative</option>
+                  <option value="dpo">DPO</option>
+                </select>
+              </div>
+              <div id="farm-data-panel" className="grid gap-2 rounded-md border border-emerald-300/25 bg-emerald-400/10 p-2.5 text-xs text-cyan-100/70">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Farm data</span>
+                  <strong className="text-lime-200">Cow metrics</strong>
+                </div>
+                <TextInput
+                  className={inputClass}
+                  sizing="sm"
+                  id="farm-name"
+                  type="text"
+                  placeholder="Farm name"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <div className={labelClass}>
+                    <Label htmlFor="farm-cow-count">Cows</Label>
+                    <TextInput className={inputClass} sizing="sm" id="farm-cow-count" type="number" min="0" placeholder="120" />
+                  </div>
+                  <div className={labelClass}>
+                    <Label htmlFor="farm-herd-type">Herd type</Label>
+                    <select id="farm-herd-type" className={inputClass} defaultValue="mixed">
+                      <option value="dairy">Dairy</option>
+                      <option value="beef">Beef</option>
+                      <option value="mixed">Mixed</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className={labelClass}>
+                    <Label htmlFor="farm-daily-output">Daily output</Label>
+                    <TextInput className={inputClass} sizing="sm" id="farm-daily-output" type="number" min="0" placeholder="kg/day" />
+                  </div>
+                  <div className={labelClass}>
+                    <Label htmlFor="farm-co2e">CO2e/day</Label>
+                    <TextInput className={inputClass} sizing="sm" id="farm-co2e" type="number" min="0" placeholder="kg" />
+                  </div>
+                </div>
+              </div>
+              <div className="grid gap-2 rounded-md border border-cyan-200/25 bg-slate-950/80 p-2.5 text-xs text-cyan-100/70">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Farm-to-fork route</span>
+                  <strong id="supply-chain-count" className="text-lime-200">0 stops</strong>
+                </div>
+                <TextInput
+                  className={inputClass}
+                  sizing="sm"
+                  id="supply-chain-name"
+                  type="text"
+                  placeholder="Route name"
+                />
+                <ol id="supply-chain-list" className="grid gap-1 text-cyan-50" />
+                <div className="grid grid-cols-2 gap-2">
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="add-supply-chain-stop" type="button">Add Stop</Button>
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="clear-supply-chain" type="button">Clear Route</Button>
+                </div>
+                <div className="grid grid-cols-[1fr_auto] gap-2">
+                  <select id="saved-supply-chain-routes" className={inputClass} defaultValue="">
+                    <option value="">Saved routes</option>
+                  </select>
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="save-supply-chain" type="button">Save</Button>
+                </div>
+                <Button className={secondaryButtonClass} color="alternative" size="sm" id="load-supply-chain" type="button">Load Saved Route</Button>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="export-supply-chain" type="button">Export JSON</Button>
+                  <Button className={secondaryButtonClass} color="alternative" size="sm" id="import-supply-chain" type="button">Import JSON</Button>
+                </div>
+                <input id="import-supply-chain-file" type="file" accept="application/json,.json" className="hidden" />
+                <Button
+                  className={`${secondaryButtonClass} hidden`}
+                  color="alternative"
+                  id="view-farm-to-fork"
+                  size="sm"
+                  type="button"
+                >
+                  View farm-to-fork 3D
+                </Button>
+              </div>
+              </section>
+              </div>
+
               <div
                 id="map"
                 className="relative z-10 h-full min-h-0 overflow-hidden"
@@ -186,6 +308,15 @@ export default function MapPage() {
               <span>Grid ID: <strong id="grid-id" className="font-extrabold text-lime-200">0</strong></span>
               <span>Date: <strong id="grid-date" className="font-extrabold text-lime-200">0</strong></span>
             </p>
+            <Button
+              className={`${secondaryButtonClass} mt-3 hidden`}
+              color="alternative"
+              id="view-3d-grid"
+              size="xs"
+              type="button"
+            >
+              View selected grid in 3D
+            </Button>
             <div className="mt-3 flex flex-wrap gap-2" role="tablist" aria-label="Selected grid analysis">
               {["Land Use", "Population", "Environment"].map((tab, index) => (
                 <Button

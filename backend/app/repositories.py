@@ -12,6 +12,11 @@ from app.temporal import TemporalGranularity, build_temporal_analysis
 DEFAULT_GRID_SIZE_METERS = 1000
 MAX_PROCESSING_GRIDS = 2500
 DEFAULT_CONTEXT_STATISTICS_SCHEMA = "public"
+SUPPLY_CHAIN_STOP_TYPES = ("farm", "cooperative", "dpo")
+LEGACY_SUPPLY_CHAIN_STOP_TYPES = {
+    "processor": "cooperative",
+    "retailer": "dpo",
+}
 
 
 def get_context_statistics_schema(conn) -> str:
@@ -391,6 +396,279 @@ def ensure_rainfall_tables() -> None:
             """
         )
         conn.commit()
+
+
+def ensure_supply_chain_route_tables() -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS supply_chain_routes (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              name text NOT NULL,
+              description text,
+              metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              updated_at timestamptz NOT NULL DEFAULT now()
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_supply_chain_routes_updated_at
+              ON supply_chain_routes (updated_at DESC)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS supply_chain_route_stops (
+              id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+              route_id uuid NOT NULL REFERENCES supply_chain_routes(id) ON DELETE CASCADE,
+              client_stop_id text,
+              stop_order integer NOT NULL,
+              stop_type text NOT NULL CHECK (
+                stop_type IN ('farm', 'cooperative', 'dpo')
+              ),
+              name text,
+              geometry geometry(Geometry, 4326) NOT NULL CHECK (
+                GeometryType(geometry) IN ('POLYGON', 'MULTIPOLYGON')
+              ),
+              farm_metrics jsonb NOT NULL DEFAULT '{}'::jsonb,
+              created_at timestamptz NOT NULL DEFAULT now(),
+              updated_at timestamptz NOT NULL DEFAULT now(),
+              UNIQUE (route_id, stop_order)
+            )
+            """
+        )
+        conn.execute(
+            """
+            DO $$
+            DECLARE
+              constraint_name text;
+            BEGIN
+              SELECT conname INTO constraint_name
+              FROM pg_constraint
+              WHERE conrelid = 'supply_chain_route_stops'::regclass
+                AND contype = 'c'
+                AND pg_get_constraintdef(oid) LIKE '%stop_type%'
+              LIMIT 1;
+
+              IF constraint_name IS NOT NULL THEN
+                EXECUTE format('ALTER TABLE supply_chain_route_stops DROP CONSTRAINT %I', constraint_name);
+              END IF;
+            END $$;
+            """
+        )
+        conn.execute(
+            """
+            UPDATE supply_chain_route_stops
+            SET
+              stop_type = CASE stop_type
+                WHEN 'processor' THEN 'cooperative'
+                WHEN 'retailer' THEN 'dpo'
+                ELSE stop_type
+              END,
+              name = CASE
+                WHEN stop_type IN ('processor', 'cooperative') AND name = 'Processor' THEN 'Cooperative'
+                WHEN stop_type IN ('retailer', 'dpo') AND name = 'Retailer' THEN 'DPO'
+                ELSE name
+              END,
+              updated_at = now()
+            WHERE stop_type IN ('processor', 'retailer')
+               OR (stop_type IN ('cooperative', 'dpo') AND name IN ('Processor', 'Retailer'))
+            """
+        )
+        conn.execute(
+            """
+            ALTER TABLE supply_chain_route_stops
+              ADD CONSTRAINT supply_chain_route_stops_stop_type_check
+              CHECK (stop_type IN ('farm', 'cooperative', 'dpo'))
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_supply_chain_route_stops_route_order
+              ON supply_chain_route_stops (route_id, stop_order)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_supply_chain_route_stops_geometry
+              ON supply_chain_route_stops
+              USING gist (geometry)
+            """
+        )
+        conn.commit()
+
+
+def _supply_chain_stop_rows(conn, route_id: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+          id::text,
+          client_stop_id,
+          stop_type AS type,
+          name,
+          ST_AsGeoJSON(geometry)::json AS geometry,
+          farm_metrics,
+          stop_order
+        FROM supply_chain_route_stops
+        WHERE route_id = %s
+        ORDER BY stop_order
+        """,
+        (route_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _supply_chain_route_row(conn, route_id: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        """
+        SELECT
+          id::text,
+          name,
+          description,
+          metadata,
+          created_at,
+          updated_at
+        FROM supply_chain_routes
+        WHERE id = %s
+        """,
+        (route_id,),
+    ).fetchone()
+    if not row:
+        return None
+    route = dict(row)
+    route["stops"] = _supply_chain_stop_rows(conn, route["id"])
+    return route
+
+
+def _insert_supply_chain_stops(conn, *, route_id: str, stops: list[dict[str, Any]]) -> None:
+    for index, stop in enumerate(stops, start=1):
+        farm_metrics = stop.get("farmMetrics") or stop.get("farm_metrics") or {}
+        stop_type = _canonical_supply_chain_stop_type(stop["type"])
+        conn.execute(
+            """
+            INSERT INTO supply_chain_route_stops (
+              route_id,
+              client_stop_id,
+              stop_order,
+              stop_type,
+              name,
+              geometry,
+              farm_metrics
+            )
+            VALUES (
+              %(route_id)s,
+              %(client_stop_id)s,
+              %(stop_order)s,
+              %(stop_type)s,
+              %(name)s,
+              ST_SetSRID(ST_GeomFromGeoJSON(%(geometry)s), 4326),
+              %(farm_metrics)s
+            )
+            """,
+            {
+                "route_id": route_id,
+                "client_stop_id": stop.get("id") or stop.get("clientStopId"),
+                "stop_order": index,
+                "stop_type": stop_type,
+                "name": stop.get("name"),
+                "geometry": Json(stop["geometry"]),
+                "farm_metrics": Json(farm_metrics),
+            },
+        )
+
+
+def _canonical_supply_chain_stop_type(stop_type: str) -> str:
+    return LEGACY_SUPPLY_CHAIN_STOP_TYPES.get(stop_type, stop_type)
+
+
+def list_supply_chain_routes(limit: int = 50) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+              id::text,
+              name,
+              description,
+              metadata,
+              created_at,
+              updated_at
+            FROM supply_chain_routes
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
+        routes = []
+        for row in rows:
+            route = dict(row)
+            route["stops"] = _supply_chain_stop_rows(conn, route["id"])
+            routes.append(route)
+        return routes
+
+
+def get_supply_chain_route(route_id: str) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        return _supply_chain_route_row(conn, route_id)
+
+
+def create_supply_chain_route(route: dict[str, Any]) -> dict[str, Any]:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            INSERT INTO supply_chain_routes (name, description, metadata)
+            VALUES (%(name)s, %(description)s, %(metadata)s)
+            RETURNING id::text
+            """,
+            {
+                "name": route["name"],
+                "description": route.get("description"),
+                "metadata": Json(route.get("metadata") or {}),
+            },
+        ).fetchone()
+        route_id = row["id"]
+        _insert_supply_chain_stops(conn, route_id=route_id, stops=route["stops"])
+        saved = _supply_chain_route_row(conn, route_id)
+        conn.commit()
+        return saved
+
+
+def update_supply_chain_route(route_id: str, route: dict[str, Any]) -> dict[str, Any] | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            UPDATE supply_chain_routes
+            SET
+              name = %(name)s,
+              description = %(description)s,
+              metadata = %(metadata)s,
+              updated_at = now()
+            WHERE id = %(route_id)s
+            RETURNING id::text
+            """,
+            {
+                "route_id": route_id,
+                "name": route["name"],
+                "description": route.get("description"),
+                "metadata": Json(route.get("metadata") or {}),
+            },
+        ).fetchone()
+        if not row:
+            conn.rollback()
+            return None
+        conn.execute("DELETE FROM supply_chain_route_stops WHERE route_id = %s", (route_id,))
+        _insert_supply_chain_stops(conn, route_id=route_id, stops=route["stops"])
+        saved = _supply_chain_route_row(conn, route_id)
+        conn.commit()
+        return saved
+
+
+def delete_supply_chain_route(route_id: str) -> bool:
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM supply_chain_routes WHERE id = %s", (route_id,))
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 def upsert_rainfall_area(area_geojson: dict[str, Any]) -> str:

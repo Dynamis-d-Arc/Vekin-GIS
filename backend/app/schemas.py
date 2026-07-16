@@ -1,7 +1,8 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from pydantic import ConfigDict
 
 
 class AreaDateRequest(BaseModel):
@@ -90,3 +91,64 @@ class OpenMeteoWeatherResponse(BaseModel):
     average_temperature_c: float | None
     cumulative_rainfall_mm: float | None
     daily: list[OpenMeteoDailyWeather]
+
+
+class SupplyChainFarmMetrics(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    cow_count: int | None = Field(default=None, ge=0, alias="cowCount")
+    herd_type: Literal["dairy", "beef", "mixed"] | None = Field(default=None, alias="herdType")
+    daily_output_kg: float | None = Field(default=None, ge=0, alias="dailyOutputKg")
+    co2e_kg_per_day: float | None = Field(default=None, ge=0, alias="co2eKgPerDay")
+
+
+class SupplyChainStopBase(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str | None = Field(default=None, description="Optional client-side stop id from legacy localStorage data.")
+    type: Literal["farm", "cooperative", "dpo", "processor", "retailer"]
+    name: str | None = None
+    geometry: dict[str, Any] = Field(..., description="Polygon or MultiPolygon GeoJSON geometry in EPSG:4326")
+    farm_metrics: SupplyChainFarmMetrics | None = Field(default=None, alias="farmMetrics")
+
+
+class SupplyChainRouteCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=1000)
+    stops: list[SupplyChainStopBase] = Field(default_factory=list, min_length=2)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SupplyChainRouteUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=1000)
+    stops: list[SupplyChainStopBase] = Field(default_factory=list, min_length=2)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SupplyChainStopResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    client_stop_id: str | None = Field(default=None, alias="clientStopId")
+    type: str
+    name: str | None
+    geometry: dict[str, Any]
+    farm_metrics: dict[str, Any] = Field(default_factory=dict, alias="farmMetrics")
+    stop_order: int = Field(alias="stopOrder")
+
+
+class SupplyChainRouteResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: str
+    description: str | None
+    metadata: dict[str, Any]
+    stops: list[SupplyChainStopResponse]
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")

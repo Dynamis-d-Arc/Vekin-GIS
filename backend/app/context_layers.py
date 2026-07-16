@@ -29,6 +29,7 @@ from app.repositories import ensure_grids_for_area, insert_context_statistics, u
 
 
 MAX_OVERLAY_PIXELS = 2400
+MAX_TERRAIN_HEIGHTMAP_PIXELS = 257
 MAX_CONTEXT_AREA_DEGREES = 2.0
 BUILT_UP_CLASS = 50
 GREEN_COVER_CLASSES = {10, 20, 30, 40, 90, 95, 100}
@@ -61,6 +62,41 @@ def _rgba_png(path: Path, rgba: np.ndarray) -> None:
             ColorInterp.blue,
             ColorInterp.alpha,
         )
+
+
+def _terrain_heightmap_json(path: Path, data: np.ndarray, bbox_values: tuple[float, float, float, float]) -> None:
+    valid = np.isfinite(data)
+    if np.any(valid):
+        fallback = float(np.nanmedian(data[valid]))
+    else:
+        fallback = 0.0
+    filled = np.where(valid, data, fallback).astype(np.float32)
+    source_height, source_width = filled.shape
+    scale = min(
+        MAX_TERRAIN_HEIGHTMAP_PIXELS / source_width,
+        MAX_TERRAIN_HEIGHTMAP_PIXELS / source_height,
+        1,
+    )
+    target_width = max(2, round(source_width * scale))
+    target_height = max(2, round(source_height * scale))
+    x_index = np.linspace(0, source_width - 1, target_width).round().astype(np.int32)
+    y_index = np.linspace(0, source_height - 1, target_height).round().astype(np.int32)
+    sampled = filled[np.ix_(y_index, x_index)]
+    payload = {
+        "bounds": {
+            "west": bbox_values[0],
+            "south": bbox_values[1],
+            "east": bbox_values[2],
+            "north": bbox_values[3],
+        },
+        "width": target_width,
+        "height": target_height,
+        "minimum_height": float(np.nanmin(sampled)),
+        "maximum_height": float(np.nanmax(sampled)),
+        "heights": np.round(sampled, 2).reshape(-1).tolist(),
+        "source": "cop-dem-glo-30",
+    }
+    path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
 
 
 def _scaled_shape(width: int, height: int) -> tuple[int, int]:
@@ -638,6 +674,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     settings.context_temp_dir.mkdir(parents=True, exist_ok=True)
     key = hashlib.sha1(",".join(f"{value:.6f}" for value in bbox_values).encode("utf-8")).hexdigest()[:16]
     dem_path = settings.context_temp_dir / f"{key}-dem.png"
+    dem_terrain_path = settings.context_temp_dir / f"{key}-dem-terrain.json"
     population_years = _worldpop_years()
     land_cover_years = _land_cover_years()
 
@@ -649,6 +686,8 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
     )
     if not dem_path.exists():
         _rgba_png(dem_path, _dem_rgba(dem_overlay))
+    if not dem_terrain_path.exists():
+        _terrain_heightmap_json(dem_terrain_path, dem, bbox_values)
 
     land_cover_by_year: dict[int, tuple[np.ndarray, Affine, Any]] = {}
     land_cover_overlay_by_year: dict[int, np.ndarray] = {}
@@ -716,6 +755,7 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         river_lines = None
 
     relative_dem_url = f"/context/{dem_path.name}"
+    relative_dem_terrain_url = f"/context/{dem_terrain_path.name}"
     relative_land_cover_url = f"/context/{land_cover_path.name}"
     context_layer_id = upsert_context_layer(
         area_hash=key,
@@ -753,5 +793,6 @@ def create_context_layers(area_geojson: dict[str, Any]) -> dict[str, Any]:
         "land_cover_year": latest_land_cover_year,
         "bounds": [[south, west], [north, east]],
         "dem_url": relative_dem_url,
+        "dem_terrain_url": relative_dem_terrain_url,
         "land_cover_url": relative_land_cover_url,
     }
