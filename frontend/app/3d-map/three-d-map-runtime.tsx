@@ -452,6 +452,9 @@ function formatRouteCarbon(co2eKg: number) {
   if (co2eKg >= 1000) {
     return `${(co2eKg / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} t CO2e`;
   }
+  if (co2eKg < 10) {
+    return `${co2eKg.toLocaleString(undefined, { maximumFractionDigits: 2 })} kg CO2e`;
+  }
   return `${Math.round(co2eKg).toLocaleString()} kg CO2e`;
 }
 
