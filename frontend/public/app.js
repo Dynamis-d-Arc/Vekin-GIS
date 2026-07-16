@@ -607,14 +607,14 @@ function normalizeSupplyChainLinks(links = [], stops = []) {
   });
 }
 
-function nearestStopIndex(sourceStop, candidateIndexes) {
+function nearestStopIndex(sourceStop, candidateIndexes, stops = supplyChainStops) {
   const sourceBounds = polygonToBounds(sourceStop?.geometry);
   if (!sourceBounds || !candidateIndexes.length) return -1;
   const sourceCenter = L.latLngBounds(sourceBounds).getCenter();
   let bestIndex = -1;
   let bestDistance = Infinity;
   candidateIndexes.forEach((candidateIndex) => {
-    const candidateBounds = polygonToBounds(supplyChainStops[candidateIndex]?.geometry);
+    const candidateBounds = polygonToBounds(stops[candidateIndex]?.geometry);
     if (!candidateBounds) return;
     const distance = sourceCenter.distanceTo(L.latLngBounds(candidateBounds).getCenter());
     if (distance < bestDistance) {
@@ -625,11 +625,11 @@ function nearestStopIndex(sourceStop, candidateIndexes) {
   return bestIndex;
 }
 
-function defaultSupplyChainLinks() {
+function defaultSupplyChainLinks(stops = supplyChainStops) {
   const farms = [];
   const cooperatives = [];
   const dpos = [];
-  supplyChainStops.forEach((stop, index) => {
+  stops.forEach((stop, index) => {
     if (stop.type === "farm") farms.push(index);
     else if (stop.type === "cooperative") cooperatives.push(index);
     else if (stop.type === "dpo") dpos.push(index);
@@ -638,22 +638,22 @@ function defaultSupplyChainLinks() {
   const links = [];
   if (cooperatives.length) {
     farms.forEach((farmIndex) => {
-      const cooperativeIndex = nearestStopIndex(supplyChainStops[farmIndex], cooperatives);
+      const cooperativeIndex = nearestStopIndex(stops[farmIndex], cooperatives, stops);
       if (cooperativeIndex >= 0) {
         links.push({
-          fromStopId: supplyChainStops[farmIndex].id,
-          toStopId: supplyChainStops[cooperativeIndex].id,
+          fromStopId: stops[farmIndex].id,
+          toStopId: stops[cooperativeIndex].id,
           type: "inbound",
           metadata: { autoAssigned: true },
         });
       }
     });
     cooperatives.forEach((cooperativeIndex) => {
-      const dpoIndex = nearestStopIndex(supplyChainStops[cooperativeIndex], dpos);
+      const dpoIndex = nearestStopIndex(stops[cooperativeIndex], dpos, stops);
       if (dpoIndex >= 0) {
         links.push({
-          fromStopId: supplyChainStops[cooperativeIndex].id,
-          toStopId: supplyChainStops[dpoIndex].id,
+          fromStopId: stops[cooperativeIndex].id,
+          toStopId: stops[dpoIndex].id,
           type: "outbound",
           metadata: { autoAssigned: true },
         });
@@ -662,10 +662,10 @@ function defaultSupplyChainLinks() {
   }
 
   if (!links.length) {
-    supplyChainStops.slice(0, -1).forEach((stop, index) => {
+    stops.slice(0, -1).forEach((stop, index) => {
       links.push({
         fromStopId: stop.id,
-        toStopId: supplyChainStops[index + 1].id,
+        toStopId: stops[index + 1].id,
         type: "chain",
         metadata: { autoAssigned: true },
       });
@@ -698,7 +698,8 @@ function normalizeSupplyChainRoute(route) {
     .map((stop, index) => normalizeSupplyChainStop(stop, index))
     .filter(Boolean);
   if (!stops.length) return null;
-  const links = normalizeSupplyChainLinks(route?.links || [], stops);
+  const savedLinks = normalizeSupplyChainLinks(route?.links || [], stops);
+  const links = savedLinks.length ? savedLinks : defaultSupplyChainLinks(stops);
   return {
     id: route.id || `route-${Date.now()}`,
     source: route.source || "db",
