@@ -88,6 +88,7 @@ const DEFAULT_LATITUDE = 14.975972;
 const DEFAULT_LONGITUDE = 101.42225;
 const RURAL_ROAD_SNAP_RADIUS_METERS = 2500;
 const ROUTE_LINE_HEIGHT_METERS = 260;
+const AVERAGE_TRUCK_CO2E_KG_PER_KM = 0.9;
 const COW_MODEL_URI = "/models/GLB_Cow.glb";
 const COW_BOUNDARY: Boundary = {
   west: 101.3111,
@@ -413,6 +414,52 @@ function routePositionsFromCenters(Cesium: CesiumGlobal, centers: RouteCenter[])
   );
 }
 
+function routeDistanceMeters(Cesium: CesiumGlobal, positions: import("cesium").Cartesian3[]) {
+  return positions.slice(1).reduce((total, position, index) => {
+    const previous = positions[index];
+    return previous ? total + Cesium.Cartesian3.distance(previous, position) : total;
+  }, 0);
+}
+
+function formatRouteDistance(meters: number) {
+  if (!Number.isFinite(meters) || meters <= 0) return "Distance pending";
+  const kilometers = meters / 1000;
+  return kilometers >= 10
+    ? `${Math.round(kilometers).toLocaleString()} km`
+    : `${kilometers.toLocaleString(undefined, { maximumFractionDigits: 1 })} km`;
+}
+
+function formatRouteCarbon(co2eKg: number) {
+  if (!Number.isFinite(co2eKg) || co2eKg <= 0) return "0 kg CO2e";
+  if (co2eKg >= 1000) {
+    return `${(co2eKg / 1000).toLocaleString(undefined, { maximumFractionDigits: 2 })} t CO2e`;
+  }
+  return `${Math.round(co2eKg).toLocaleString()} kg CO2e`;
+}
+
+function routeSpanLabel(routeLegs: RouteLeg[], routeStops: SupplyChainStop[]) {
+  if (!routeLegs.length) return "Source to destination pending";
+  const hubIndex = supplyNetworkHubIndex(routeStops);
+  if (hubIndex >= 0) {
+    const inboundCount = routeLegs.filter((leg) => leg.direction === "inbound").length;
+    const outboundCount = routeLegs.filter((leg) => leg.direction === "outbound").length;
+    const hubLabel = routeLegs.find((leg) => leg.direction === "inbound")?.to.label
+      || routeLegs.find((leg) => leg.direction === "outbound")?.from.label
+      || routeStops[hubIndex]?.name
+      || buildingTypeLabel(routeStops[hubIndex]?.type || "processor");
+    const sourceLabel = inboundCount === 1
+      ? routeLegs.find((leg) => leg.direction === "inbound")?.from.label || "1 source"
+      : `${inboundCount.toLocaleString()} sources`;
+    const destinationLabel = outboundCount === 1
+      ? routeLegs.find((leg) => leg.direction === "outbound")?.to.label || "1 destination"
+      : `${outboundCount.toLocaleString()} destinations`;
+    return `${sourceLabel} to ${hubLabel} to ${destinationLabel}`;
+  }
+  const firstLeg = routeLegs[0]!;
+  const lastLeg = routeLegs[routeLegs.length - 1]!;
+  return `${firstLeg.from.label} to ${lastLeg.to.label}`;
+}
+
 function supplyNetworkHubIndex(stops: SupplyChainStop[]) {
   const primaryHubIndex = stops.findIndex((stop) => stop.type === "processor");
   if (primaryHubIndex >= 0) return primaryHubIndex;
@@ -720,6 +767,11 @@ export function ThreeDMapRuntime() {
     const farmPanel = document.getElementById("three-d-farm-panel");
     const farmTitleNode = document.getElementById("three-d-farm-title");
     const farmSummaryNode = document.getElementById("three-d-farm-summary");
+    const routeCarbonPanel = document.getElementById("three-d-route-carbon-panel");
+    const routeCarbonNode = document.getElementById("three-d-route-carbon");
+    const routeSpanNode = document.getElementById("three-d-route-span");
+    const routeDistanceNode = document.getElementById("three-d-route-distance");
+    const routeCarbonFactorNode = document.getElementById("three-d-route-carbon-factor");
 
     if (!container) return;
 
@@ -940,6 +992,22 @@ export function ThreeDMapRuntime() {
       });
       const routeLegs = routeLegsFromCenters(routeCenters, routeStops);
       const shipmentPaths = routeLegs.map((leg) => routePositionsFromCenters(Cesium, [leg.from, leg.to]));
+      const updateRouteCarbonPanel = () => {
+        if (!routeCarbonPanel || !routeCarbonNode || !routeSpanNode || !routeDistanceNode || !routeCarbonFactorNode) return;
+        if (!routeLegs.length) {
+          routeCarbonPanel.classList.add("hidden");
+          return;
+        }
+        const distanceMeters = shipmentPaths.reduce((total, positions) => total + routeDistanceMeters(Cesium, positions), 0);
+        const distanceKilometers = distanceMeters / 1000;
+        const co2eKg = distanceKilometers * AVERAGE_TRUCK_CO2E_KG_PER_KM;
+        routeCarbonPanel.classList.remove("hidden");
+        routeCarbonNode.textContent = formatRouteCarbon(co2eKg);
+        routeSpanNode.textContent = routeSpanLabel(routeLegs, routeStops);
+        routeDistanceNode.textContent = `${formatRouteDistance(distanceMeters)} route distance`;
+        routeCarbonFactorNode.textContent = `${AVERAGE_TRUCK_CO2E_KG_PER_KM.toLocaleString(undefined, { maximumFractionDigits: 2 })} kg CO2e/km avg truck`;
+      };
+      updateRouteCarbonPanel();
       const routeVisuals = routeLegs.map((leg, legIndex) => {
         const shipmentPath = shipmentPaths[legIndex] || [];
         const routeColor = leg.direction === "inbound"
@@ -992,6 +1060,7 @@ export function ThreeDMapRuntime() {
             maxSnapDistanceMeters = Math.max(maxSnapDistanceMeters, roadRoute.maxSnapDistanceMeters);
           }));
           if (!loadedLegs || disposed) return;
+          updateRouteCarbonPanel();
           const snapNote = snappedCount
             ? ` Snapped ${snappedCount.toLocaleString()} stop${snappedCount === 1 ? "" : "s"} to nearby roads, max ${Math.round(maxSnapDistanceMeters).toLocaleString()} m.`
             : "";

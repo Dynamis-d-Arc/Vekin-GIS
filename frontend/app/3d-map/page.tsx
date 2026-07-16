@@ -47,6 +47,13 @@ export default function ThreeDMapPage() {
             <strong id="three-d-farm-title">Farm</strong>
             <p id="three-d-farm-summary">No farm selected.</p>
           </div>
+          <div id="three-d-route-carbon-panel" className="hidden" aria-live="polite">
+            <span>Route carbon</span>
+            <strong id="three-d-route-carbon">0 kg CO2e</strong>
+            <p id="three-d-route-span">Source to destination pending</p>
+            <p id="three-d-route-distance">Distance pending</p>
+            <p id="three-d-route-carbon-factor">Average truck factor</p>
+          </div>
           <div className="three-d-layer-list" aria-label="3D map layers">
             <label className="three-d-toggle-row" htmlFor="three-d-satellite-layer">
               <input id="three-d-satellite-layer" type="checkbox" defaultChecked />

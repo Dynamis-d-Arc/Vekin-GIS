@@ -1568,27 +1568,47 @@ tr:last-child td {
   line-height: 1.45;
 }
 
-#three-d-farm-panel {
+#three-d-farm-panel,
+#three-d-route-carbon-panel {
   display: grid;
   gap: 5px;
   padding: 10px;
-  background: rgba(20, 83, 45, 0.24);
-  border: 1px solid rgba(134, 239, 172, 0.28);
   border-radius: 8px;
 }
 
-#three-d-farm-panel strong {
+#three-d-farm-panel {
+  background: rgba(20, 83, 45, 0.24);
+  border: 1px solid rgba(134, 239, 172, 0.28);
+}
+
+#three-d-route-carbon-panel {
+  background: rgba(8, 47, 73, 0.4);
+  border: 1px solid rgba(125, 211, 252, 0.24);
+}
+
+#three-d-farm-panel strong,
+#three-d-route-carbon-panel strong {
   color: #ffffff;
   font-size: 15px;
 }
 
-#three-d-farm-panel.hidden {
+#three-d-farm-panel.hidden,
+#three-d-route-carbon-panel.hidden {
   display: none;
 }
 
-#three-d-farm-summary {
+#three-d-farm-summary,
+#three-d-route-span,
+#three-d-route-distance,
+#three-d-route-carbon-factor {
   color: rgba(220, 252, 231, 0.78);
   font-size: 12px;
+}
+
+#three-d-route-span {
+  color: #e0f2fe;
+  font-weight: 800;
+  overflow-wrap: anywhere;
 }
 
 .three-d-map-frame .maplibregl-ctrl-bottom-right {
