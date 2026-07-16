@@ -38,6 +38,9 @@ type CowPoint = {
   id: string;
   longitude: number;
   latitude: number;
+  label: string;
+  representedCount: number;
+  farmLabel: string;
 };
 type FootprintGeometry = {
   type: "Polygon" | "MultiPolygon";
@@ -91,26 +94,8 @@ const RURAL_ROAD_SNAP_RADIUS_METERS = 2500;
 const ROUTE_LINE_HEIGHT_METERS = 260;
 const AVERAGE_TRUCK_CO2E_KG_PER_KM = 0.9;
 const COW_MODEL_URI = "/models/GLB_Cow.glb";
-const COW_BOUNDARY: Boundary = {
-  west: 101.3111,
-  south: 15.4420,
-  east: 101.3334,
-  north: 15.4560,
-};
-const COW_POINT_OFFSETS = [
-  [0.10, 0.16],
-  [0.18, 0.72],
-  [0.25, 0.43],
-  [0.35, 0.85],
-  [0.42, 0.28],
-  [0.51, 0.58],
-  [0.60, 0.18],
-  [0.68, 0.76],
-  [0.74, 0.39],
-  [0.83, 0.63],
-  [0.90, 0.22],
-  [0.94, 0.88],
-] as const;
+const COWS_PER_MODEL = 5;
+const MAX_COW_MODELS_PER_FARM = 200;
 
 type TerrainRequest = {
   west: number;
@@ -710,22 +695,86 @@ function boundaryIntersects(a: Boundary, b: Boundary) {
     && a.north >= b.south;
 }
 
-function pointInsideBoundary(point: CowPoint, boundary: Boundary) {
-  return point.longitude >= boundary.west
-    && point.longitude <= boundary.east
-    && point.latitude >= boundary.south
-    && point.latitude <= boundary.north;
+function pointInRing(longitude: number, latitude: number, ring: [number, number][]) {
+  let inside = false;
+  for (let current = 0, previous = ring.length - 1; current < ring.length; previous = current++) {
+    const [currentLongitude, currentLatitude] = ring[current];
+    const [previousLongitude, previousLatitude] = ring[previous];
+    const crossesLatitude = currentLatitude > latitude !== previousLatitude > latitude;
+    if (!crossesLatitude) continue;
+    const slopeLongitude = ((previousLongitude - currentLongitude) * (latitude - currentLatitude))
+      / (previousLatitude - currentLatitude)
+      + currentLongitude;
+    if (longitude < slopeLongitude) inside = !inside;
+  }
+  return inside;
 }
 
-function cowPointsForBoundary(boundary: Boundary) {
-  if (!boundaryIntersects(COW_BOUNDARY, boundary)) return [];
-  const width = COW_BOUNDARY.east - COW_BOUNDARY.west;
-  const height = COW_BOUNDARY.north - COW_BOUNDARY.south;
-  return COW_POINT_OFFSETS.map(([x, y], index) => ({
-    id: `cow-${index + 1}`,
-    longitude: COW_BOUNDARY.west + width * x,
-    latitude: COW_BOUNDARY.south + height * y,
-  })).filter((point) => pointInsideBoundary(point, boundary));
+function cowPointsForFarm(stop: SupplyChainStop, stopIndex: number): CowPoint[] {
+  if (stop.type !== "farm") return [];
+  const cowCount = Math.max(0, Math.floor(Number(stop.farmMetrics?.cowCount) || 0));
+  if (!cowCount) return [];
+  const rings = footprintRings(stop.geometry);
+  if (!rings.length) return [];
+
+  const modelCount = Math.min(Math.ceil(cowCount / COWS_PER_MODEL), MAX_COW_MODELS_PER_FARM);
+  const farmLabel = stop.name || buildingTypeLabel(stop.type);
+  const points: CowPoint[] = [];
+
+  rings.forEach((ring, ringIndex) => {
+    if (points.length >= modelCount) return;
+    const bounds = ring.reduce(
+      (total, [longitude, latitude]) => ({
+        west: Math.min(total.west, longitude),
+        south: Math.min(total.south, latitude),
+        east: Math.max(total.east, longitude),
+        north: Math.max(total.north, latitude),
+      }),
+      { west: Infinity, south: Infinity, east: -Infinity, north: -Infinity },
+    );
+    const remaining = modelCount - points.length;
+    let gridSize = Math.max(2, Math.ceil(Math.sqrt(remaining * 2)));
+    const maxGridSize = Math.max(gridSize, Math.ceil(Math.sqrt(modelCount)) * 8);
+
+    while (points.length < modelCount && gridSize <= maxGridSize) {
+      for (let row = 0; row < gridSize && points.length < modelCount; row += 1) {
+        for (let column = 0; column < gridSize && points.length < modelCount; column += 1) {
+          const longitude = bounds.west + ((column + 0.5) / gridSize) * (bounds.east - bounds.west);
+          const latitude = bounds.south + ((row + 0.5) / gridSize) * (bounds.north - bounds.south);
+          if (!pointInRing(longitude, latitude, ring)) continue;
+          const representedCount = Math.min(COWS_PER_MODEL, cowCount - points.length * COWS_PER_MODEL);
+          points.push({
+            id: `cow-${stopIndex + 1}-${ringIndex + 1}-${points.length + 1}`,
+            longitude,
+            latitude,
+            label: representedCount === 1 ? "1 cow" : `${representedCount} cows`,
+            representedCount,
+            farmLabel,
+          });
+        }
+      }
+      gridSize *= 2;
+    }
+  });
+
+  if (!points.length) {
+    const centroid = ringCentroid(rings[0]);
+    const representedCount = Math.min(COWS_PER_MODEL, cowCount);
+    points.push({
+      id: `cow-${stopIndex + 1}-1-1`,
+      longitude: centroid.longitude,
+      latitude: centroid.latitude,
+      label: representedCount === 1 ? "1 cow" : `${representedCount} cows`,
+      representedCount,
+      farmLabel,
+    });
+  }
+
+  return points;
+}
+
+function cowPointsForRouteStops(stops: SupplyChainStop[]) {
+  return stops.flatMap((stop, stopIndex) => cowPointsForFarm(stop, stopIndex));
 }
 
 function ringIntersectsBounds(ring: number[][], bounds: TerrainRequest) {
@@ -1201,9 +1250,9 @@ export function ThreeDMapRuntime() {
         });
         if (shipmentEntity) shipmentEntities.push(shipmentEntity);
       });
-      cowPointsForBoundary(terrainRequest).forEach((cow) => {
+      cowPointsForRouteStops(routeStops).forEach((cow) => {
         const cowEntity = viewer?.entities.add({
-          name: cow.id,
+          name: `${cow.farmLabel}: ${cow.label}`,
           position: Cesium.Cartesian3.fromDegrees(cow.longitude, cow.latitude, 0),
           model: {
             uri: COW_MODEL_URI,
@@ -1213,7 +1262,7 @@ export function ThreeDMapRuntime() {
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
           },
           label: {
-            text: "cow",
+            text: cow.label,
             font: "700 13px sans-serif",
             fillColor: Cesium.Color.WHITE,
             outlineColor: Cesium.Color.BLACK,
@@ -1227,6 +1276,8 @@ export function ThreeDMapRuntime() {
             type: "cow",
             longitude: cow.longitude,
             latitude: cow.latitude,
+            representedCount: cow.representedCount,
+            farmLabel: cow.farmLabel,
           },
         });
         if (cowEntity) cowEntities.push(cowEntity);

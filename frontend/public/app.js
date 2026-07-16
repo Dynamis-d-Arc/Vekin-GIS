@@ -869,7 +869,21 @@ function loadSupplyChainRoute(route) {
   if (supplyChainNameInput) supplyChainNameInput.value = normalized.name;
   renderSupplyChainStops();
   const bounds = supplyChainBounds(supplyChainStops);
-  if (bounds) map.fitBounds(bounds, { padding: [24, 24] });
+  if (bounds) {
+    map.fitBounds(bounds, { padding: [24, 24] });
+    show3dTerrainResult(bounds, {
+      label: normalized.name,
+      route: supplyChainStops,
+      footprint: supplyChainStops[0]?.geometry,
+      buildingType: supplyChainStops[0]?.type || "farm",
+      startDate: getActiveDateRange().startDate,
+      endDate: getActiveDateRange().endDate,
+      landCoverUrl: latest3dContext?.land_cover_url,
+      demUrl: latest3dContext?.dem_url,
+      demTerrainUrl: latest3dContext?.dem_terrain_url,
+      overlayBounds: contextBoundsToLeafletBounds(latest3dContext?.bounds),
+    });
+  }
   setStatus(
     normalized.source === "local"
       ? `Loaded local route ${normalized.name}. Click Save to move it into the database.`
