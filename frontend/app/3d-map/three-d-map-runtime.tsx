@@ -460,6 +460,10 @@ function routeSpanLabel(routeLegs: RouteLeg[], routeStops: SupplyChainStop[]) {
   return `${firstLeg.from.label} to ${lastLeg.to.label}`;
 }
 
+function routeLegSpanLabel(leg: RouteLeg) {
+  return `${leg.from.label} to ${leg.to.label}`;
+}
+
 function supplyNetworkHubIndex(stops: SupplyChainStop[]) {
   const primaryHubIndex = stops.findIndex((stop) => stop.type === "processor");
   if (primaryHubIndex >= 0) return primaryHubIndex;
@@ -992,19 +996,23 @@ export function ThreeDMapRuntime() {
       });
       const routeLegs = routeLegsFromCenters(routeCenters, routeStops);
       const shipmentPaths = routeLegs.map((leg) => routePositionsFromCenters(Cesium, [leg.from, leg.to]));
+      let selectedRouteLegIndex: number | null = null;
       const updateRouteCarbonPanel = () => {
         if (!routeCarbonPanel || !routeCarbonNode || !routeSpanNode || !routeDistanceNode || !routeCarbonFactorNode) return;
         if (!routeLegs.length) {
           routeCarbonPanel.classList.add("hidden");
           return;
         }
-        const distanceMeters = shipmentPaths.reduce((total, positions) => total + routeDistanceMeters(Cesium, positions), 0);
+        const selectedLeg = selectedRouteLegIndex === null ? null : routeLegs[selectedRouteLegIndex] || null;
+        const distanceMeters = selectedLeg
+          ? routeDistanceMeters(Cesium, shipmentPaths[selectedRouteLegIndex!] || [])
+          : shipmentPaths.reduce((total, positions) => total + routeDistanceMeters(Cesium, positions), 0);
         const distanceKilometers = distanceMeters / 1000;
         const co2eKg = distanceKilometers * AVERAGE_TRUCK_CO2E_KG_PER_KM;
         routeCarbonPanel.classList.remove("hidden");
         routeCarbonNode.textContent = formatRouteCarbon(co2eKg);
-        routeSpanNode.textContent = routeSpanLabel(routeLegs, routeStops);
-        routeDistanceNode.textContent = `${formatRouteDistance(distanceMeters)} route distance`;
+        routeSpanNode.textContent = selectedLeg ? routeLegSpanLabel(selectedLeg) : routeSpanLabel(routeLegs, routeStops);
+        routeDistanceNode.textContent = `${formatRouteDistance(distanceMeters)} ${selectedLeg ? "selected leg" : "total route"} distance`;
         routeCarbonFactorNode.textContent = `${AVERAGE_TRUCK_CO2E_KG_PER_KM.toLocaleString(undefined, { maximumFractionDigits: 2 })} kg CO2e/km avg truck`;
       };
       updateRouteCarbonPanel();
@@ -1024,6 +1032,11 @@ export function ThreeDMapRuntime() {
             clampToGround: true,
             zIndex: 9,
           },
+          properties: {
+            type: "route-leg",
+            routeLegIndex: legIndex,
+            label: leg.label,
+          },
         });
         if (routeOutlineEntity) routeEntities.push(routeOutlineEntity);
 
@@ -1035,6 +1048,11 @@ export function ThreeDMapRuntime() {
             material: routeColor.withAlpha(0.98),
             clampToGround: true,
             zIndex: 10,
+          },
+          properties: {
+            type: "route-leg",
+            routeLegIndex: legIndex,
+            label: leg.label,
           },
         });
         if (routeEntity) routeEntities.push(routeEntity);
@@ -1169,13 +1187,41 @@ export function ThreeDMapRuntime() {
         }
         return null;
       };
+      const routeLegIndexFromPosition = (position: import("cesium").Cartesian2 | undefined) => {
+        if (!position) return null;
+        const pickedItems = [
+          viewer?.scene.pick(position),
+          ...(viewer?.scene.drillPick(position, 12, 5, 5) || []),
+        ];
+        for (const picked of pickedItems) {
+          const entity = (picked?.id || picked?.primitive?.id) as import("cesium").Entity | undefined;
+          const type = entity?.properties?.type?.getValue(Cesium.JulianDate.now());
+          const routeLegIndex = Number(entity?.properties?.routeLegIndex?.getValue(Cesium.JulianDate.now()));
+          if (type === "route-leg" && Number.isInteger(routeLegIndex) && routeLegs[routeLegIndex]) {
+            return routeLegIndex;
+          }
+        }
+        return null;
+      };
       pickHandler.setInputAction((movement: { position: import("cesium").Cartesian2 }) => {
+        const routeLegIndex = routeLegIndexFromPosition(movement.position);
+        if (routeLegIndex !== null) {
+          selectedRouteLegIndex = routeLegIndex;
+          updateRouteCarbonPanel();
+          setStatus(`Selected route leg - ${routeLegs[routeLegIndex]!.label}`);
+          return;
+        }
         const entity = farmEntityFromPosition(movement.position);
         if (entity) showFarmMetrics(entity, "click");
+        if (!entity) {
+          selectedRouteLegIndex = null;
+          updateRouteCarbonPanel();
+        }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
       pickHandler.setInputAction((movement: { endPosition?: import("cesium").Cartesian2 }) => {
         const entity = farmEntityFromPosition(movement.endPosition);
-        viewer!.scene.canvas.style.cursor = entity ? "pointer" : "";
+        const routeLegIndex = routeLegIndexFromPosition(movement.endPosition);
+        viewer!.scene.canvas.style.cursor = entity || routeLegIndex !== null ? "pointer" : "";
         if (entity) showFarmMetrics(entity, "hover");
       }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
