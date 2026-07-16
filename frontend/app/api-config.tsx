@@ -1,7 +1,3 @@
-"use client";
-
-import { useEffect } from "react";
-
 declare global {
   interface Window {
     VEKIN_API_BASE?: string;
@@ -9,10 +5,13 @@ declare global {
 }
 
 export function ApiConfig() {
-  useEffect(() => {
-    window.VEKIN_API_BASE =
-      process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-  }, []);
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
-  return null;
+  return (
+    <script
+      dangerouslySetInnerHTML={{
+        __html: `window.VEKIN_API_BASE=${JSON.stringify(apiBase)};`,
+      }}
+    />
+  );
 }
