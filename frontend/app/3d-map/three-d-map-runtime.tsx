@@ -26,6 +26,7 @@ type GridCollection = {
   features?: GridFeature[];
 };
 type GridStyle = "ndvi" | "land-cover";
+type BuildingDisplayMode = "solid" | "border";
 type BuildingType = "farm" | "middle-man" | "processor" | "warehouse" | "retailer" | "end-product";
 type Boundary = {
   west: number;
@@ -755,6 +756,7 @@ export function ThreeDMapRuntime() {
     const reliefInput = document.getElementById("three-d-terrain-scale") as HTMLInputElement | null;
     const gridStyleSelect = document.getElementById("three-d-grid-style") as HTMLSelectElement | null;
     const buildingTypeSelect = document.getElementById("three-d-building-type") as HTMLSelectElement | null;
+    const buildingDisplaySelect = document.getElementById("three-d-building-display") as HTMLSelectElement | null;
     const satelliteLayerInput = document.getElementById("three-d-satellite-layer") as HTMLInputElement | null;
     const elevationLayerInput = document.getElementById("three-d-elevation-layer") as HTMLInputElement | null;
     const gridOverlayInput = document.getElementById("three-d-grid-overlay") as HTMLInputElement | null;
@@ -787,6 +789,7 @@ export function ThreeDMapRuntime() {
     const selectionEntities: import("cesium").Entity[] = [];
     const markerEntities: import("cesium").Entity[] = [];
     const buildingEntities: import("cesium").Entity[] = [];
+    const buildingBorderEntities: import("cesium").Entity[] = [];
     const buildingLabelEntities: import("cesium").Entity[] = [];
     const routeEntities: import("cesium").Entity[] = [];
     const shipmentEntities: import("cesium").Entity[] = [];
@@ -821,6 +824,9 @@ export function ThreeDMapRuntime() {
       };
       const currentBuildingType = (): BuildingType => {
         return buildingTypeFromValue(buildingTypeSelect?.value || terrainRequest.buildingType);
+      };
+      const currentBuildingDisplay = (): BuildingDisplayMode => {
+        return buildingDisplaySelect?.value === "border" ? "border" : "solid";
       };
 
       viewer = new Cesium.Viewer(container, {
@@ -951,12 +957,34 @@ export function ThreeDMapRuntime() {
             properties: {
               type: "building",
               buildingType: stop.type,
+              buildingHeight: style.height,
               routeIndex: stopIndex + 1,
               label,
               farmSummary,
             },
           });
           if (buildingEntity) buildingEntities.push(buildingEntity);
+
+          const borderEntity = viewer?.entities.add({
+            name: `${displayLabel} footprint border`,
+            polyline: {
+              positions: Cesium.Cartesian3.fromDegreesArray(coordinates),
+              width: 6,
+              material: style.color.withAlpha(0.98),
+              clampToGround: true,
+              zIndex: 12,
+            },
+            show: false,
+            properties: {
+              type: "building-border",
+              buildingType: stop.type,
+              buildingHeight: style.height,
+              routeIndex: stopIndex + 1,
+              label,
+              farmSummary,
+            },
+          });
+          if (borderEntity) buildingBorderEntities.push(borderEntity);
 
           const centroid = ringCentroid(ring);
           if (ringIndex === 0) {
@@ -986,9 +1014,12 @@ export function ThreeDMapRuntime() {
             properties: {
               type: "building-label",
               buildingType: stop.type,
+              buildingHeight: style.height,
               routeIndex: stopIndex + 1,
               label,
               farmSummary,
+              longitude: centroid.longitude,
+              latitude: centroid.latitude,
             },
           });
           if (labelEntity) buildingLabelEntities.push(labelEntity);
@@ -1027,7 +1058,7 @@ export function ThreeDMapRuntime() {
           name: `Farm-to-fork road route outline: ${leg.label}`,
           polyline: {
             positions: shipmentPath,
-            width: 14,
+            width: 10,
             material: Cesium.Color.WHITE.withAlpha(0.92),
             clampToGround: true,
             zIndex: 9,
@@ -1044,7 +1075,7 @@ export function ThreeDMapRuntime() {
           name: `Farm-to-fork road route: ${leg.label}`,
           polyline: {
             positions: shipmentPath,
-            width: 8,
+            width: 5,
             material: routeColor.withAlpha(0.98),
             clampToGround: true,
             zIndex: 10,
@@ -1267,6 +1298,9 @@ export function ThreeDMapRuntime() {
         buildingEntities.forEach((entity) => {
           entity.show = buildingVisible;
         });
+        buildingBorderEntities.forEach((entity) => {
+          entity.show = buildingVisible && currentBuildingDisplay() === "border";
+        });
         buildingLabelEntities.forEach((entity) => {
           entity.show = buildingVisible;
         });
@@ -1284,6 +1318,54 @@ export function ThreeDMapRuntime() {
 
       const setGridOverlayVisible = () => {
         applyLayerVisibility();
+      };
+
+      const applyBuildingDisplay = () => {
+        const mode = currentBuildingDisplay();
+        buildingEntities.forEach((entity) => {
+          const buildingType = buildingTypeFromValue(
+            entity.properties?.buildingType?.getValue(Cesium.JulianDate.now()) || currentBuildingType(),
+          );
+          const style = buildingStyle(Cesium, buildingType);
+          const height = Number(entity.properties?.buildingHeight?.getValue(Cesium.JulianDate.now()));
+          const buildingHeight = Number.isFinite(height) ? height : style.height;
+          if (entity.polygon) {
+            entity.polygon.material = new Cesium.ColorMaterialProperty(
+              mode === "border" ? style.color.withAlpha(0.08) : style.color.withAlpha(0.72),
+            );
+            entity.polygon.outline = new Cesium.ConstantProperty(true);
+            entity.polygon.outlineColor = new Cesium.ConstantProperty(
+              mode === "border" ? style.color.withAlpha(0.98) : Cesium.Color.WHITE.withAlpha(0.8),
+            );
+            entity.polygon.outlineWidth = new Cesium.ConstantProperty(1);
+            entity.polygon.height = new Cesium.ConstantProperty(0);
+            entity.polygon.heightReference = new Cesium.ConstantProperty(Cesium.HeightReference.CLAMP_TO_GROUND);
+            entity.polygon.extrudedHeight = mode === "border" ? undefined : new Cesium.ConstantProperty(buildingHeight);
+            entity.polygon.extrudedHeightReference = mode === "border"
+              ? undefined
+              : new Cesium.ConstantProperty(Cesium.HeightReference.RELATIVE_TO_GROUND);
+          }
+        });
+        buildingBorderEntities.forEach((entity) => {
+          const buildingType = buildingTypeFromValue(
+            entity.properties?.buildingType?.getValue(Cesium.JulianDate.now()) || currentBuildingType(),
+          );
+          const style = buildingStyle(Cesium, buildingType);
+          entity.show = mode === "border" && buildingLayerInput?.checked !== false;
+          if (entity.polyline) {
+            entity.polyline.width = new Cesium.ConstantProperty(6);
+            entity.polyline.material = new Cesium.ColorMaterialProperty(style.color.withAlpha(0.98));
+          }
+        });
+        buildingLabelEntities.forEach((entity) => {
+          const longitude = Number(entity.properties?.longitude?.getValue(Cesium.JulianDate.now()));
+          const latitude = Number(entity.properties?.latitude?.getValue(Cesium.JulianDate.now()));
+          if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return;
+          const height = Number(entity.properties?.buildingHeight?.getValue(Cesium.JulianDate.now()));
+          const labelHeight = (currentBuildingDisplay() === "border" ? 14 : (Number.isFinite(height) ? height : 34) + 16);
+          entity.position = new Cesium.ConstantPositionProperty(Cesium.Cartesian3.fromDegrees(longitude, latitude, labelHeight));
+        });
+        viewer?.scene.requestRender();
       };
 
       const updateGridStyle = () => {
@@ -1304,28 +1386,35 @@ export function ThreeDMapRuntime() {
         const style = buildingStyle(Cesium, currentBuildingType());
         buildingEntities.forEach((entity) => {
           entity.name = `${style.label} building`;
-          if (entity.polygon) {
-            entity.polygon.material = new Cesium.ColorMaterialProperty(style.color.withAlpha(0.72));
-            entity.polygon.extrudedHeight = new Cesium.ConstantProperty(style.height);
-          }
           entity.properties = new Cesium.PropertyBag({
             type: "building",
             buildingType: currentBuildingType(),
+            buildingHeight: style.height,
+          });
+        });
+        buildingBorderEntities.forEach((entity) => {
+          entity.name = `${style.label} footprint border`;
+          entity.properties = new Cesium.PropertyBag({
+            type: "building-border",
+            buildingType: currentBuildingType(),
+            buildingHeight: style.height,
           });
         });
         buildingLabelEntities.forEach((entity) => {
           entity.name = `${style.label} label`;
           if (entity.label) entity.label.text = new Cesium.ConstantProperty(style.label);
           const position = entity.position?.getValue(Cesium.JulianDate.now());
-          if (position) {
-            const cartographic = Cesium.Cartographic.fromCartesian(position);
-            entity.position = new Cesium.ConstantPositionProperty(Cesium.Cartesian3.fromRadians(
-              cartographic.longitude,
-              cartographic.latitude,
-              style.height + 16,
-            ));
-          }
+          const cartographic = position ? Cesium.Cartographic.fromCartesian(position) : null;
+          entity.properties = new Cesium.PropertyBag({
+            type: "building-label",
+            buildingType: currentBuildingType(),
+            buildingHeight: style.height,
+            label: style.label,
+            longitude: cartographic ? Cesium.Math.toDegrees(cartographic.longitude) : undefined,
+            latitude: cartographic ? Cesium.Math.toDegrees(cartographic.latitude) : undefined,
+          });
         });
+        applyBuildingDisplay();
         applyLayerVisibility();
         viewer?.scene.requestRender();
       };
@@ -1423,6 +1512,7 @@ export function ThreeDMapRuntime() {
       reliefInput?.addEventListener("input", updateRelief);
       gridStyleSelect?.addEventListener("change", updateGridStyle);
       buildingTypeSelect?.addEventListener("change", updateBuildingStyle);
+      buildingDisplaySelect?.addEventListener("change", applyBuildingDisplay);
       satelliteLayerInput?.addEventListener("change", applyLayerVisibility);
       elevationLayerInput?.addEventListener("change", applyLayerVisibility);
       gridOverlayInput?.addEventListener("change", setGridOverlayVisible);
@@ -1446,6 +1536,7 @@ export function ThreeDMapRuntime() {
         reliefInput?.removeEventListener("input", updateRelief);
         gridStyleSelect?.removeEventListener("change", updateGridStyle);
         buildingTypeSelect?.removeEventListener("change", updateBuildingStyle);
+        buildingDisplaySelect?.removeEventListener("change", applyBuildingDisplay);
         satelliteLayerInput?.removeEventListener("change", applyLayerVisibility);
         elevationLayerInput?.removeEventListener("change", applyLayerVisibility);
         gridOverlayInput?.removeEventListener("change", setGridOverlayVisible);

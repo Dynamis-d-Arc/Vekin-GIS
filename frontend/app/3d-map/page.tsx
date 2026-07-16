@@ -42,6 +42,13 @@ export default function ThreeDMapPage() {
               <option value="end-product">End product destination</option>
             </select>
           </label>
+          <label htmlFor="three-d-building-display">
+            Building display
+            <select id="three-d-building-display" defaultValue="solid">
+              <option value="solid">3D buildings</option>
+              <option value="border">Borders only</option>
+            </select>
+          </label>
           <div id="three-d-farm-panel" className="hidden" aria-live="polite">
             <span>Selected farm</span>
             <strong id="three-d-farm-title">Farm</strong>
