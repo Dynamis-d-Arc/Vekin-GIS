@@ -959,6 +959,7 @@ export function ThreeDMapRuntime() {
               buildingType: stop.type,
               buildingHeight: style.height,
               routeIndex: stopIndex + 1,
+              stopIndex,
               label,
               farmSummary,
             },
@@ -980,6 +981,7 @@ export function ThreeDMapRuntime() {
               buildingType: stop.type,
               buildingHeight: style.height,
               routeIndex: stopIndex + 1,
+              stopIndex,
               label,
               farmSummary,
             },
@@ -1028,6 +1030,10 @@ export function ThreeDMapRuntime() {
       const routeLegs = routeLegsFromCenters(routeCenters, routeStops);
       const shipmentPaths = routeLegs.map((leg) => routePositionsFromCenters(Cesium, [leg.from, leg.to]));
       let selectedRouteLegIndex: number | null = null;
+      const routeLegIndexForStop = (stopIndex: number) => {
+        const directIndex = routeLegs.findIndex((leg) => leg.from.stopIndex === stopIndex || leg.to.stopIndex === stopIndex);
+        return directIndex >= 0 ? directIndex : null;
+      };
       const updateRouteCarbonPanel = () => {
         if (!routeCarbonPanel || !routeCarbonNode || !routeSpanNode || !routeDistanceNode || !routeCarbonFactorNode) return;
         if (!routeLegs.length) {
@@ -1087,8 +1093,32 @@ export function ThreeDMapRuntime() {
           },
         });
         if (routeEntity) routeEntities.push(routeEntity);
-        return { leg, routeEntity, routeOutlineEntity };
+        return { leg, routeEntity, routeOutlineEntity, routeColor };
       });
+      const updateRouteHighlight = () => {
+        routeVisuals.forEach(({ routeEntity, routeOutlineEntity, routeColor }, legIndex) => {
+          const isSelected = selectedRouteLegIndex === legIndex;
+          const hasSelection = selectedRouteLegIndex !== null;
+          if (routeOutlineEntity?.polyline) {
+            routeOutlineEntity.polyline.width = new Cesium.ConstantProperty(isSelected ? 16 : hasSelection ? 7 : 10);
+            routeOutlineEntity.polyline.material = new Cesium.ColorMaterialProperty(
+              (isSelected ? Cesium.Color.YELLOW : Cesium.Color.WHITE).withAlpha(isSelected ? 0.96 : hasSelection ? 0.18 : 0.92),
+            );
+            routeOutlineEntity.polyline.zIndex = new Cesium.ConstantProperty(isSelected ? 18 : 9);
+          }
+          if (routeEntity?.polyline) {
+            routeEntity.polyline.width = new Cesium.ConstantProperty(isSelected ? 9 : hasSelection ? 3 : 5);
+            routeEntity.polyline.material = new Cesium.ColorMaterialProperty(routeColor.withAlpha(isSelected ? 1 : hasSelection ? 0.32 : 0.98));
+            routeEntity.polyline.zIndex = new Cesium.ConstantProperty(isSelected ? 19 : 10);
+          }
+        });
+        viewer?.scene.requestRender();
+      };
+      const selectRouteLeg = (routeLegIndex: number | null) => {
+        selectedRouteLegIndex = routeLegIndex;
+        updateRouteCarbonPanel();
+        updateRouteHighlight();
+      };
       const updateRoadRoute = async () => {
         if (!routeVisuals.length) return;
         let loadedLegs = 0;
@@ -1199,9 +1229,13 @@ export function ThreeDMapRuntime() {
         if (buildingType !== "farm") return false;
         const label = properties?.label?.getValue(Cesium.JulianDate.now()) || entity?.name || "Farm";
         const farmSummary = properties?.farmSummary?.getValue(Cesium.JulianDate.now()) || "No cow metrics entered for this farm.";
+        const stopIndex = Number(properties?.stopIndex?.getValue(Cesium.JulianDate.now()));
         farmPanel?.classList.remove("hidden");
         if (farmTitleNode) farmTitleNode.textContent = label;
         if (farmSummaryNode) farmSummaryNode.textContent = farmSummary;
+        if (source === "click" && Number.isInteger(stopIndex)) {
+          selectRouteLeg(routeLegIndexForStop(stopIndex));
+        }
         setStatus(`${source === "hover" ? "Farm hover" : "Farm selected"} - ${label}: ${farmSummary}`);
         return true;
       };
@@ -1237,16 +1271,14 @@ export function ThreeDMapRuntime() {
       pickHandler.setInputAction((movement: { position: import("cesium").Cartesian2 }) => {
         const routeLegIndex = routeLegIndexFromPosition(movement.position);
         if (routeLegIndex !== null) {
-          selectedRouteLegIndex = routeLegIndex;
-          updateRouteCarbonPanel();
+          selectRouteLeg(routeLegIndex);
           setStatus(`Selected route leg - ${routeLegs[routeLegIndex]!.label}`);
           return;
         }
         const entity = farmEntityFromPosition(movement.position);
         if (entity) showFarmMetrics(entity, "click");
         if (!entity) {
-          selectedRouteLegIndex = null;
-          updateRouteCarbonPanel();
+          selectRouteLeg(null);
         }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
       pickHandler.setInputAction((movement: { endPosition?: import("cesium").Cartesian2 }) => {
