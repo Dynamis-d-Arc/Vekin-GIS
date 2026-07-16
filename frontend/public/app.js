@@ -1,3 +1,4 @@
+(() => {
 const API_BASE = window.VEKIN_API_BASE || "http://localhost:8000";
 const dateRangeStorageKey = "vekin-date-range";
 const detailCharts = {};
@@ -405,6 +406,9 @@ const farmDailyOutputInput = document.getElementById("farm-daily-output");
 const farmCo2eInput = document.getElementById("farm-co2e");
 let latest3dContext = null;
 let supplyChainStops = [];
+let savedSupplyChainRouteCache = [];
+let loadingSupplyChainRoutes = false;
+let selectedSupplyChainStopIndex = null;
 const supplyChainStorageKey = "vekin-supply-chain-routes";
 const supplyChainBoundsPaddingRatio = 0.45;
 
@@ -474,9 +478,11 @@ function supplyChainTypeLabel(type) {
   const labels = {
     farm: "Farm",
     "middle-man": "Middle man",
-    processor: "Processor",
+    processor: "Cooperative",
+    cooperative: "Cooperative",
     warehouse: "Warehouse",
-    retailer: "Retailer",
+    retailer: "DPO",
+    dpo: "DPO",
     "end-product": "End product destination",
   };
   return labels[type] || "Farm";
@@ -484,6 +490,18 @@ function supplyChainTypeLabel(type) {
 
 function routeDisplayName(route) {
   return route?.name || "Farm-to-fork route";
+}
+
+function routeOptionValue(route) {
+  return `${route.source || "db"}:${route.id}`;
+}
+
+function routeFromOptionValue(value) {
+  const [source, ...idParts] = String(value || "").split(":");
+  return {
+    source: source || "db",
+    id: idParts.join(":"),
+  };
 }
 
 function readSavedSupplyChainRoutes() {
@@ -499,6 +517,16 @@ function writeSavedSupplyChainRoutes(routes) {
   window.localStorage.setItem(supplyChainStorageKey, JSON.stringify(routes));
 }
 
+function removeLocalSupplyChainRoute(route) {
+  if (!route) return;
+  const routes = localSupplyChainRoutes()
+    .filter((candidate) => (
+      candidate.id !== route.id
+      && candidate.name.toLowerCase() !== route.name.toLowerCase()
+    ));
+  writeSavedSupplyChainRoutes(routes);
+}
+
 function currentRouteName() {
   return supplyChainNameInput?.value.trim() || `Farm-to-fork route ${new Date().toLocaleDateString()}`;
 }
@@ -507,7 +535,7 @@ function normalizeSupplyChainStop(stop, index = 0) {
   if (!stop?.geometry || !isValidPolygonGeometry(stop.geometry)) return null;
   const type = stop.type || "farm";
   const normalized = {
-    id: stop.id || `stop-${Date.now()}-${index + 1}`,
+    id: stop.clientStopId || stop.client_stop_id || stop.id || `stop-${Date.now()}-${index + 1}`,
     type,
     name: stop.name || supplyChainTypeLabel(type),
     geometry: stop.geometry,
@@ -525,29 +553,103 @@ function normalizeSupplyChainRoute(route) {
   if (!stops.length) return null;
   return {
     id: route.id || `route-${Date.now()}`,
+    source: route.source || "db",
     name: routeDisplayName(route),
-    updatedAt: route.updatedAt || new Date().toISOString(),
+    updatedAt: route.updatedAt || route.updated_at || new Date().toISOString(),
+    createdAt: route.createdAt || route.created_at,
+    metadata: route.metadata || {},
     stops,
   };
 }
 
-function refreshSavedSupplyChainSelect() {
-  if (!savedSupplyChainSelect) return;
-  const routes = readSavedSupplyChainRoutes()
-    .map(normalizeSupplyChainRoute)
-    .filter(Boolean)
+function localSupplyChainRoutes() {
+  return readSavedSupplyChainRoutes()
+    .map((route) => normalizeSupplyChainRoute({ ...route, source: "local" }))
+    .filter(Boolean);
+}
+
+function combinedSupplyChainRoutes() {
+  const dbRoutes = savedSupplyChainRouteCache
+    .map((route) => normalizeSupplyChainRoute({ ...route, source: "db" }))
+    .filter(Boolean);
+  const dbNames = new Set(dbRoutes.map((route) => route.name.toLowerCase()));
+  const localRoutes = localSupplyChainRoutes()
+    .filter((route) => !dbNames.has(route.name.toLowerCase()));
+  return [...dbRoutes, ...localRoutes]
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+}
+
+function renderSavedSupplyChainSelect(routes) {
+  if (!savedSupplyChainSelect) return;
   const selected = savedSupplyChainSelect.value;
   savedSupplyChainSelect.innerHTML = '<option value="">Saved routes</option>';
   routes.forEach((route) => {
     const option = document.createElement("option");
-    option.value = route.id;
-    option.textContent = `${route.name} (${route.stops.length} stops)`;
+    option.value = routeOptionValue(route);
+    option.textContent = `${route.name} (${route.stops.length} stops${route.source === "local" ? ", local" : ""})`;
     savedSupplyChainSelect.appendChild(option);
   });
-  if (routes.some((route) => route.id === selected)) {
+  if (routes.some((route) => routeOptionValue(route) === selected)) {
     savedSupplyChainSelect.value = selected;
   }
+}
+
+async function refreshSavedSupplyChainSelect({ refreshBackend = true } = {}) {
+  renderSavedSupplyChainSelect(combinedSupplyChainRoutes());
+  if (!refreshBackend || loadingSupplyChainRoutes) return;
+  loadingSupplyChainRoutes = true;
+  try {
+    savedSupplyChainRouteCache = await fetchJson("/api/supply-chain/routes?limit=200");
+    renderSavedSupplyChainSelect(combinedSupplyChainRoutes());
+  } catch (error) {
+    setStatus(`Saved routes are using browser storage because the database API is unavailable: ${error.message}`);
+  } finally {
+    loadingSupplyChainRoutes = false;
+  }
+}
+
+function saveLocalSupplyChainRoute(route) {
+  const routes = localSupplyChainRoutes();
+  const nextRoutes = [
+    { ...route, source: "local" },
+    ...routes.filter((candidate) => candidate.id !== route.id && candidate.name.toLowerCase() !== route.name.toLowerCase()),
+  ].slice(0, 20);
+  writeSavedSupplyChainRoutes(nextRoutes);
+}
+
+function supplyChainRoutePayload(name) {
+  return {
+    name,
+    stops: supplyChainStops,
+    metadata: {
+      source: "vekin-gis-frontend",
+      localStorageKey: supplyChainStorageKey,
+    },
+  };
+}
+
+async function saveSupplyChainRouteToDatabase(name) {
+  const selected = routeFromOptionValue(savedSupplyChainSelect?.value);
+  const routes = combinedSupplyChainRoutes();
+  const selectedRoute = routes.find((route) => (
+    route.source === selected.source && route.id === selected.id
+  ));
+  const existingDbRoute = selectedRoute?.source === "db"
+    ? selectedRoute
+    : routes.find((route) => route.source === "db" && route.name.toLowerCase() === name.toLowerCase());
+  const payload = supplyChainRoutePayload(name);
+  if (existingDbRoute) {
+    return fetchJson(`/api/supply-chain/routes/${existingDbRoute.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+  return fetchJson("/api/supply-chain/routes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 function hide3dTerrainResult() {
@@ -643,6 +745,12 @@ function updateFarmToForkButton() {
 }
 
 function renderSupplyChainStops() {
+  if (
+    selectedSupplyChainStopIndex !== null
+    && (selectedSupplyChainStopIndex < 0 || selectedSupplyChainStopIndex >= supplyChainStops.length)
+  ) {
+    selectedSupplyChainStopIndex = null;
+  }
   if (supplyChainCount) {
     supplyChainCount.textContent = `${supplyChainStops.length} ${supplyChainStops.length === 1 ? "stop" : "stops"}`;
   }
@@ -650,14 +758,21 @@ function renderSupplyChainStops() {
     supplyChainList.innerHTML = "";
     supplyChainStops.forEach((stop, index) => {
       const item = document.createElement("li");
-      item.className = "grid gap-1 rounded border border-cyan-200/15 bg-cyan-400/5 px-2 py-1";
+      const isSelected = index === selectedSupplyChainStopIndex;
+      item.className = `grid gap-1 rounded border px-2 py-1 ${
+        isSelected
+          ? "border-lime-200/60 bg-lime-300/10"
+          : "border-cyan-200/15 bg-cyan-400/5"
+      }`;
       item.innerHTML = `
         <div class="flex items-center justify-between gap-2">
-          <span>${index + 1}. ${supplyChainTypeLabel(stop.type)}</span>
+          <span>${index + 1}. ${supplyChainTypeLabel(stop.type)}${isSelected ? " - selected" : ""}</span>
           <small>${stop.name}</small>
         </div>
         ${stop.type === "farm" && farmMetricsSummary(stop.farmMetrics) ? `<small>${farmMetricsSummary(stop.farmMetrics)}</small>` : ""}
-        <div class="grid grid-cols-3 gap-1">
+        <div class="grid grid-cols-5 gap-1">
+          <button type="button" data-route-action="select" data-route-index="${index}">Select</button>
+          <button type="button" data-route-action="replace-plot" data-route-index="${index}">Plot</button>
           <button type="button" data-route-action="up" data-route-index="${index}">Up</button>
           <button type="button" data-route-action="down" data-route-index="${index}">Down</button>
           <button type="button" data-route-action="remove" data-route-index="${index}">Remove</button>
@@ -676,11 +791,16 @@ function loadSupplyChainRoute(route) {
     return;
   }
   supplyChainStops = normalized.stops;
+  selectedSupplyChainStopIndex = null;
   if (supplyChainNameInput) supplyChainNameInput.value = normalized.name;
   renderSupplyChainStops();
   const bounds = supplyChainBounds(supplyChainStops);
   if (bounds) map.fitBounds(bounds, { padding: [24, 24] });
-  setStatus(`Loaded ${normalized.name}.`);
+  setStatus(
+    normalized.source === "local"
+      ? `Loaded local route ${normalized.name}. Click Save to move it into the database.`
+      : `Loaded ${normalized.name} from the database.`,
+  );
 }
 
 function show3dTerrainResult(bounds, options = {}) {
@@ -758,6 +878,14 @@ function setSelectedPolygon(latlngs, options = {}) {
   if (options.refreshWeather !== false) {
     loadSelectedGridWeather(options.weatherLabel || "selected polygon");
   }
+}
+
+function setSelectedPolygonFromGeometry(geometry, options = {}) {
+  if (!isValidPolygonGeometry(geometry)) return;
+  const latlngs = geometry.coordinates[0]
+    .slice(0, -1)
+    .map(([longitude, latitude]) => L.latLng(latitude, longitude));
+  setSelectedPolygon(latlngs, options);
 }
 
 function getSelectedBounds() {
@@ -844,6 +972,7 @@ addSupplyChainStopButton?.addEventListener("click", () => {
 
 clearSupplyChainButton?.addEventListener("click", () => {
   supplyChainStops = [];
+  selectedSupplyChainStopIndex = null;
   renderSupplyChainStops();
   setStatus("Farm-to-fork route cleared.");
 });
@@ -854,51 +983,113 @@ supplyChainList?.addEventListener("click", (event) => {
   const index = Number(button.dataset.routeIndex);
   if (!Number.isInteger(index) || index < 0 || index >= supplyChainStops.length) return;
   const action = button.dataset.routeAction;
-  if (action === "remove") {
+  if (action === "select") {
+    selectedSupplyChainStopIndex = index;
+    const bounds = polygonToBounds(supplyChainStops[index].geometry);
+    if (bounds) {
+      map.fitBounds(L.latLngBounds(bounds), { padding: [24, 24] });
+    }
+    setSelectedPolygonFromGeometry(supplyChainStops[index].geometry, {
+      refreshWeather: false,
+      fit: false,
+      clear3d: false,
+    });
+    setStatus(`Selected ${supplyChainStops[index].name}. Draw or select a new polygon, then click Plot on this stop to replace its boundary.`);
+  } else if (action === "replace-plot") {
+    const geometry = getSelectedGeometry();
+    if (!isValidPolygonGeometry(geometry)) {
+      setStatus("Draw or select a valid polygon before replacing the plot boundary.");
+      return;
+    }
+    supplyChainStops[index] = {
+      ...supplyChainStops[index],
+      geometry,
+    };
+    selectedSupplyChainStopIndex = index;
+    renderSupplyChainStops();
+    updateFarmToForkButton();
+    setStatus(`Replaced plot boundary for ${supplyChainStops[index].name}. Click Save to update the database route.`);
+  } else if (action === "remove") {
     supplyChainStops.splice(index, 1);
+    if (selectedSupplyChainStopIndex === index) selectedSupplyChainStopIndex = null;
+    if (selectedSupplyChainStopIndex !== null && selectedSupplyChainStopIndex > index) {
+      selectedSupplyChainStopIndex -= 1;
+    }
   } else if (action === "up" && index > 0) {
     [supplyChainStops[index - 1], supplyChainStops[index]] = [supplyChainStops[index], supplyChainStops[index - 1]];
+    if (selectedSupplyChainStopIndex === index) selectedSupplyChainStopIndex = index - 1;
+    else if (selectedSupplyChainStopIndex === index - 1) selectedSupplyChainStopIndex = index;
   } else if (action === "down" && index < supplyChainStops.length - 1) {
     [supplyChainStops[index], supplyChainStops[index + 1]] = [supplyChainStops[index + 1], supplyChainStops[index]];
+    if (selectedSupplyChainStopIndex === index) selectedSupplyChainStopIndex = index + 1;
+    else if (selectedSupplyChainStopIndex === index + 1) selectedSupplyChainStopIndex = index;
   }
   renderSupplyChainStops();
 });
 
-saveSupplyChainButton?.addEventListener("click", () => {
+saveSupplyChainButton?.addEventListener("click", async () => {
   if (supplyChainStops.length < 2) {
     setStatus("Add at least two route stops before saving.");
     return;
   }
-  const routes = readSavedSupplyChainRoutes()
-    .map(normalizeSupplyChainRoute)
-    .filter(Boolean);
   const name = currentRouteName();
-  const existing = routes.find((route) => route.name.toLowerCase() === name.toLowerCase());
-  const route = {
-    id: existing?.id || `route-${Date.now()}`,
-    name,
-    updatedAt: new Date().toISOString(),
-    stops: supplyChainStops,
-  };
-  const nextRoutes = [route, ...routes.filter((candidate) => candidate.id !== route.id)].slice(0, 20);
-  writeSavedSupplyChainRoutes(nextRoutes);
-  if (supplyChainNameInput) supplyChainNameInput.value = name;
-  refreshSavedSupplyChainSelect();
-  if (savedSupplyChainSelect) savedSupplyChainSelect.value = route.id;
-  setStatus(`Saved ${name}.`);
+  const selectedBeforeSave = routeFromOptionValue(savedSupplyChainSelect?.value);
+  const routeBeforeSave = combinedSupplyChainRoutes().find((route) => (
+    route.source === selectedBeforeSave.source && route.id === selectedBeforeSave.id
+  ));
+  const originalButtonText = saveSupplyChainButton.textContent;
+  saveSupplyChainButton.disabled = true;
+  saveSupplyChainButton.textContent = "Saving...";
+  setStatus(routeBeforeSave?.source === "local" ? `Importing ${name} into the database...` : `Saving ${name} to the database...`);
+  try {
+    const savedRoute = await saveSupplyChainRouteToDatabase(name);
+    if (routeBeforeSave?.source === "local") {
+      removeLocalSupplyChainRoute(routeBeforeSave);
+    }
+    savedSupplyChainRouteCache = [
+      savedRoute,
+      ...savedSupplyChainRouteCache.filter((route) => route.id !== savedRoute.id),
+    ];
+    if (supplyChainNameInput) supplyChainNameInput.value = name;
+    await refreshSavedSupplyChainSelect({ refreshBackend: true });
+    if (savedSupplyChainSelect) savedSupplyChainSelect.value = routeOptionValue({ id: savedRoute.id, source: "db" });
+    setStatus(`Saved ${name} to the database.`);
+  } catch (error) {
+    const localRoute = {
+      id: `route-${Date.now()}`,
+      name,
+      updatedAt: new Date().toISOString(),
+      stops: supplyChainStops,
+    };
+    saveLocalSupplyChainRoute(localRoute);
+    if (supplyChainNameInput) supplyChainNameInput.value = name;
+    await refreshSavedSupplyChainSelect({ refreshBackend: false });
+    if (savedSupplyChainSelect) savedSupplyChainSelect.value = routeOptionValue({ ...localRoute, source: "local" });
+    setStatus(`Database save failed, so ${name} was saved in this browser: ${error.message}`);
+  } finally {
+    saveSupplyChainButton.disabled = false;
+    saveSupplyChainButton.textContent = originalButtonText || "Save";
+  }
 });
 
-loadSupplyChainButton?.addEventListener("click", () => {
-  const routeId = savedSupplyChainSelect?.value;
-  if (!routeId) {
+loadSupplyChainButton?.addEventListener("click", async () => {
+  const selection = routeFromOptionValue(savedSupplyChainSelect?.value);
+  if (!selection.id) {
     setStatus("Choose a saved route to load.");
     return;
   }
-  const route = readSavedSupplyChainRoutes()
-    .map(normalizeSupplyChainRoute)
-    .filter(Boolean)
-    .find((candidate) => candidate.id === routeId);
-  loadSupplyChainRoute(route);
+  try {
+    if (selection.source === "db") {
+      const route = await fetchJson(`/api/supply-chain/routes/${selection.id}`);
+      loadSupplyChainRoute({ ...route, source: "db" });
+      return;
+    }
+    const route = localSupplyChainRoutes()
+      .find((candidate) => candidate.id === selection.id);
+    loadSupplyChainRoute(route);
+  } catch (error) {
+    setStatus(`Saved route could not be loaded from the database: ${error.message}`);
+  }
 });
 
 viewFarmToForkButton?.addEventListener("click", () => {
@@ -2672,3 +2863,4 @@ Promise.all([loadLatestSavedContextLayer(), loadGridLayer(), loadDashboard(), lo
   document.getElementById("status").textContent = `Backend unavailable: ${error.message}`;
 });
 }
+})();

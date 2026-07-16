@@ -27,7 +27,7 @@ type GridCollection = {
 };
 type GridStyle = "ndvi" | "land-cover";
 type BuildingDisplayMode = "solid" | "border";
-type BuildingType = "farm" | "middle-man" | "processor" | "warehouse" | "retailer" | "end-product";
+type BuildingType = "farm" | "cooperative" | "dpo" | "middle-man" | "processor" | "warehouse" | "retailer" | "end-product";
 type Boundary = {
   west: number;
   south: number;
@@ -176,11 +176,13 @@ function finiteParam(params: URLSearchParams, key: string) {
 }
 
 function buildingTypeFromValue(value: string | null): BuildingType {
+  if (value === "processor") return "cooperative";
+  if (value === "retailer") return "dpo";
   if (
-    value === "middle-man"
-    || value === "processor"
+    value === "cooperative"
+    || value === "dpo"
+    || value === "middle-man"
     || value === "warehouse"
-    || value === "retailer"
     || value === "end-product"
   ) return value;
   return "farm";
@@ -447,7 +449,7 @@ function routeSpanLabel(routeLegs: RouteLeg[], routeStops: SupplyChainStop[]) {
     const hubLabel = routeLegs.find((leg) => leg.direction === "inbound")?.to.label
       || routeLegs.find((leg) => leg.direction === "outbound")?.from.label
       || routeStops[hubIndex]?.name
-      || buildingTypeLabel(routeStops[hubIndex]?.type || "processor");
+      || buildingTypeLabel(routeStops[hubIndex]?.type || "cooperative");
     const sourceLabel = inboundCount === 1
       ? routeLegs.find((leg) => leg.direction === "inbound")?.from.label || "1 source"
       : `${inboundCount.toLocaleString()} sources`;
@@ -466,7 +468,7 @@ function routeLegSpanLabel(leg: RouteLeg) {
 }
 
 function supplyNetworkHubIndex(stops: SupplyChainStop[]) {
-  const primaryHubIndex = stops.findIndex((stop) => stop.type === "processor");
+  const primaryHubIndex = stops.findIndex((stop) => stop.type === "cooperative" || stop.type === "processor");
   if (primaryHubIndex >= 0) return primaryHubIndex;
   const secondaryHubIndex = stops.findIndex((stop) => stop.type === "warehouse" || stop.type === "middle-man");
   return secondaryHubIndex >= 0 ? secondaryHubIndex : -1;
@@ -493,7 +495,7 @@ function routeLegsFromCenters(centers: RouteCenter[], stops: SupplyChainStop[]):
     .filter((center) => center !== hub)
     .map((center) => {
       const isSource = center.stopType === "farm" || center.stopType === "middle-man";
-      const isDestination = center.stopType === "retailer" || center.stopType === "end-product";
+      const isDestination = center.stopType === "dpo" || center.stopType === "retailer" || center.stopType === "end-product";
       const inbound = isSource || (!isDestination && center.stopIndex < hub.stopIndex);
       const from = inbound ? center : hub;
       const to = inbound ? hub : center;
@@ -565,11 +567,19 @@ async function fetchRoadRoutePositions(Cesium: CesiumGlobal, centers: RouteCente
 
 function buildingTypeLabel(buildingType: BuildingType) {
   if (buildingType === "middle-man") return "Middle man";
-  if (buildingType === "processor") return "Processor";
+  if (buildingType === "cooperative" || buildingType === "processor") return "Cooperative";
   if (buildingType === "warehouse") return "Warehouse";
-  if (buildingType === "retailer") return "Retailer";
+  if (buildingType === "dpo" || buildingType === "retailer") return "DPO";
   if (buildingType === "end-product") return "End product destination";
   return "Farm";
+}
+
+function stopDisplayName(stop: SupplyChainStop, fallbackLabel: string) {
+  if (stop.type === "cooperative" && stop.name === "Processor") return "Cooperative";
+  if (stop.type === "dpo" && stop.name === "Retailer") return "DPO";
+  if (stop.type === "processor" && stop.name === "Processor") return "Cooperative";
+  if (stop.type === "retailer" && stop.name === "Retailer") return "DPO";
+  return stop.name || fallbackLabel;
 }
 
 function buildingStyle(Cesium: CesiumGlobal, buildingType: BuildingType) {
@@ -580,7 +590,7 @@ function buildingStyle(Cesium: CesiumGlobal, buildingType: BuildingType) {
       height: 54,
     };
   }
-  if (buildingType === "processor") {
+  if (buildingType === "cooperative" || buildingType === "processor") {
     return {
       label: buildingTypeLabel(buildingType),
       color: Cesium.Color.fromCssColorString("#a855f7"),
@@ -594,7 +604,7 @@ function buildingStyle(Cesium: CesiumGlobal, buildingType: BuildingType) {
       height: 48,
     };
   }
-  if (buildingType === "retailer") {
+  if (buildingType === "dpo" || buildingType === "retailer") {
     return {
       label: buildingTypeLabel(buildingType),
       color: Cesium.Color.fromCssColorString("#ef4444"),
@@ -938,7 +948,7 @@ export function ThreeDMapRuntime() {
       routeStops.forEach((stop, stopIndex) => {
         footprintRings(stop.geometry).forEach((ring, ringIndex) => {
           const style = buildingStyle(Cesium, stop.type);
-          const label = stop.name || style.label;
+          const label = stopDisplayName(stop, style.label);
           const farmSummary = stop.type === "farm" ? farmMetricsSummary(stop.farmMetrics) : "";
           const displayLabel = stop.type === "farm" ? farmLabelText(label, stop.farmMetrics) : label;
           const coordinates = ring.flatMap(([longitude, latitude]) => [longitude, latitude]);

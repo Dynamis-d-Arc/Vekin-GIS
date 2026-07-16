@@ -211,11 +211,8 @@ export default function MapPage() {
                 <Label htmlFor="building-type">Building label</Label>
                 <select id="building-type" className={inputClass} defaultValue="farm">
                   <option value="farm">Farm</option>
-                  <option value="middle-man">Middle man</option>
-                  <option value="processor">Processor</option>
-                  <option value="warehouse">Warehouse</option>
-                  <option value="retailer">Retailer</option>
-                  <option value="end-product">End product destination</option>
+                  <option value="cooperative">Cooperative</option>
+                  <option value="dpo">DPO</option>
                 </select>
               </div>
               <div id="farm-data-panel" className="grid gap-2 rounded-md border border-emerald-300/25 bg-emerald-400/10 p-2.5 text-xs text-cyan-100/70">

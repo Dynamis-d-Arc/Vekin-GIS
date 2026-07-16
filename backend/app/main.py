@@ -18,6 +18,9 @@ from app.repositories import (
     ensure_context_statistics_tables,
     ensure_ndvi_statistics_columns,
     ensure_rainfall_tables,
+    ensure_supply_chain_route_tables,
+    create_supply_chain_route,
+    delete_supply_chain_route,
     get_context_layers,
     get_dashboard,
     get_grid_layer,
@@ -26,12 +29,15 @@ from app.repositories import (
     get_metadata,
     get_ndvi_capture_dates_for_area,
     get_population_trend,
+    get_supply_chain_route,
     ensure_grids_for_area,
     insert_ndvi_statistics,
     insert_grid_rainfall_statistics,
     insert_rainfall_statistics,
     insert_satellite_image,
+    list_supply_chain_routes,
     update_satellite_status,
+    update_supply_chain_route,
     upsert_rainfall_area,
 )
 from app.schemas import (
@@ -44,6 +50,9 @@ from app.schemas import (
     ProcessRangeResponse,
     ProcessResponse,
     RainfallProcessResponse,
+    SupplyChainRouteCreate,
+    SupplyChainRouteResponse,
+    SupplyChainRouteUpdate,
 )
 
 
@@ -67,6 +76,7 @@ def startup() -> None:
     ensure_ndvi_statistics_columns()
     ensure_context_statistics_tables()
     ensure_rainfall_tables()
+    ensure_supply_chain_route_tables()
 
 
 @app.on_event("shutdown")
@@ -77,6 +87,46 @@ def shutdown() -> None:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/supply-chain/routes", response_model=list[SupplyChainRouteResponse])
+def supply_chain_routes(limit: int = Query(default=50, ge=1, le=200)) -> list[dict[str, Any]]:
+    return list_supply_chain_routes(limit)
+
+
+@app.post("/api/supply-chain/routes", response_model=SupplyChainRouteResponse, status_code=201)
+def create_supply_chain_route_endpoint(request: SupplyChainRouteCreate) -> dict[str, Any]:
+    try:
+        return create_supply_chain_route(request.model_dump(by_alias=True))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Supply-chain route could not be saved: {exc}") from exc
+
+
+@app.get("/api/supply-chain/routes/{route_id}", response_model=SupplyChainRouteResponse)
+def supply_chain_route(route_id: str) -> dict[str, Any]:
+    route = get_supply_chain_route(route_id)
+    if not route:
+        raise HTTPException(status_code=404, detail="Supply-chain route not found.")
+    return route
+
+
+@app.put("/api/supply-chain/routes/{route_id}", response_model=SupplyChainRouteResponse)
+def update_supply_chain_route_endpoint(route_id: str, request: SupplyChainRouteUpdate) -> dict[str, Any]:
+    try:
+        route = update_supply_chain_route(route_id, request.model_dump(by_alias=True))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Supply-chain route could not be updated: {exc}") from exc
+    if not route:
+        raise HTTPException(status_code=404, detail="Supply-chain route not found.")
+    return route
+
+
+@app.delete("/api/supply-chain/routes/{route_id}")
+def delete_supply_chain_route_endpoint(route_id: str) -> dict[str, Any]:
+    deleted = delete_supply_chain_route(route_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Supply-chain route not found.")
+    return {"status": "deleted", "id": route_id}
 
 
 @app.post("/api/images/search")

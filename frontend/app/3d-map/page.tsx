@@ -35,11 +35,8 @@ export default function ThreeDMapPage() {
             Building label
             <select id="three-d-building-type" defaultValue="farm">
               <option value="farm">Farm</option>
-              <option value="middle-man">Middle man</option>
-              <option value="processor">Processor</option>
-              <option value="warehouse">Warehouse</option>
-              <option value="retailer">Retailer</option>
-              <option value="end-product">End product destination</option>
+              <option value="cooperative">Cooperative</option>
+              <option value="dpo">DPO</option>
             </select>
           </label>
           <label htmlFor="three-d-building-display">
