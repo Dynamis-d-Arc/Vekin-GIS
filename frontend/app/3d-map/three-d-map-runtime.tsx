@@ -482,6 +482,14 @@ function routeLegSpanLabel(leg: RouteLeg) {
   return `${leg.from.label} to ${leg.to.label}`;
 }
 
+function routeLegColor(Cesium: CesiumGlobal, leg: RouteLeg) {
+  const isCooperativeToDpo = leg.from.stopType === "cooperative" && leg.to.stopType === "dpo";
+  if (isCooperativeToDpo) return Cesium.Color.fromCssColorString("#06b6d4");
+  if (leg.direction === "inbound") return Cesium.Color.RED;
+  if (leg.direction === "outbound") return Cesium.Color.ROYALBLUE;
+  return Cesium.Color.BLACK;
+}
+
 function supplyNetworkHubIndex(stops: SupplyChainStop[]) {
   const primaryHubIndex = stops.findIndex((stop) => stop.type === "cooperative" || stop.type === "processor");
   if (primaryHubIndex >= 0) return primaryHubIndex;
@@ -1183,11 +1191,7 @@ export function ThreeDMapRuntime() {
       updateRouteCarbonPanel();
       const routeVisuals = routeLegs.map((leg, legIndex) => {
         const shipmentPath = shipmentPaths[legIndex] || [];
-        const routeColor = leg.direction === "inbound"
-          ? Cesium.Color.RED
-          : leg.direction === "outbound"
-            ? Cesium.Color.ROYALBLUE
-            : Cesium.Color.BLACK;
+        const routeColor = routeLegColor(Cesium, leg);
         const routeOutlineEntity = viewer?.entities.add({
           name: `Farm-to-fork road route outline: ${leg.label}`,
           polyline: {
